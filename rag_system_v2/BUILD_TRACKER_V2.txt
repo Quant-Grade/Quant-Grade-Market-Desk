@@ -1,0 +1,488 @@
+================================================================================
+                    RAG + ROUTER SYSTEM V2 - HARDENED BUILD TRACKER
+                    Project: RaveBear Local LLM RAG Pipeline (Qdrant Edition)
+                    Started: 2026-01-07 02:15:00 UTC
+                    Architect: Flint (God-Mode Coder)
+================================================================================
+
+=== TRACKING INSTRUCTIONS (READ EVERY SESSION) ===
+---------------------------------------------------------------------------
+1. EVERY code file created gets an entry under "FILE REGISTRY" section
+   - Entry format:
+     [Created: YYYY-MM-DD HH:MM:SS] filename.ext
+       Path: full/path/to/file
+       Purpose: one-line description
+       Inputs: what it takes
+       Outputs: what it produces
+       Failure modes: how it can break
+       Status: CREATED | MODIFIED | TESTED | VERIFIED
+
+2. EVERY change/edit goes UNDER THE ORIGINAL FILE'S SECTION
+   - Never create new section for same file
+   - Format: [YYYY-MM-DD HH:MM:SS] CHANGE: what changed + why
+   - Keep changes chronological under each file
+
+3. SESSION END must include:
+   - RESULTS: what was accomplished
+   - SYSTEM STATE: what works, what doesn't
+   - NEXT STEPS: explicit list
+   - RISKS IDENTIFIED: what could break in prod
+
+4. This file = SINGLE SOURCE OF TRUTH for project state
+   - If context lost, read this file FIRST
+   - Resume from where NEXT STEPS left off
+---------------------------------------------------------------------------
+
+=== ARCHITECTURE DECISIONS (V2 vs V1) ===
+---------------------------------------------------------------------------
+V1 (preserved in rag_system/):
+  - FAISS flat index
+  - all-MiniLM-L6-v2 embeddings
+  - Flat chunking (512 tokens)
+  - Single index.py module
+
+V2 (this build - rag_system_v2/):
+  - Qdrant local embedded (persistent ./data/qdrant)
+  - bge-small-en-v1.5 embeddings (better for technical/crypto docs)
+  - Parent-child chunking (parent: 900-1200 tokens, child: 200-350 tokens)
+  - Separate modules: index_bm25.py, index_qdrant.py, merge_rrf.py
+  - Explicit RRF fusion with logged scores
+  - Citation verification (verify.py)
+  - Full evaluation harness (eval.py)
+  - Prompt injection detection + fail-closed router
+
+Key thresholds (MUST BE CALIBRATED via eval harness):
+  - T_DIRECT_CONFIDENCE: 0.75 (initial, tune with eval)
+  - T_RETRIEVE_CONFIDENCE: 0.50 (initial, tune with eval)
+  - T_CLARIFY_CONFIDENCE: 0.35 (initial, tune with eval)
+  - T_REFUSE_THRESHOLD: 0.25 (below this = refuse)
+  - T_RERANK_SCORE_HIGH: 0.70 (skip rerank if both top scores above)
+  - T_EVIDENCE_COUNT_MIN: 2 (need at least 2 chunks above threshold)
+  - T_SCORE_GAP_SUSPICIOUS: 0.30 (if gap > this, check for ambiguity)
+---------------------------------------------------------------------------
+
+================================================================================
+                           FILE REGISTRY
+================================================================================
+
+[Created: 2026-01-07 02:15:00] BUILD_TRACKER_V2.txt
+  Path: rag_system_v2/BUILD_TRACKER_V2.txt
+  Purpose: Master changelog and context persistence for v2 build
+  Inputs: Manual entries by architect
+  Outputs: Project state documentation
+  Failure modes: File corruption, incomplete entries
+  Status: CREATED
+  ---
+  Changes:
+  [2026-01-07 02:15:00] CREATED: Initial tracking file with v2 architecture decisions
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 02:30:00] src/__init__.py
+  Path: rag_system_v2/src\__init__.py
+  Purpose: Package initialization, version declaration
+  Inputs: None
+  Outputs: __version__ = "2.0.0"
+  Failure modes: None
+  Status: CREATED
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 02:35:00] src/config.py
+  Path: rag_system_v2/src\config.py
+  Purpose: Centralized configuration with environment variable overrides
+  Inputs: Environment variables, defaults
+  Outputs: Config singleton via get_config()
+  Failure modes: Invalid threshold ordering, missing directories
+  Status: CREATED
+  ---
+  Components:
+  - Enums: EmbeddingModel, RerankModel, RouterDecision, ModelTier
+  - Dataclasses: PathConfig, ChunkingConfig, EmbeddingConfig, QdrantConfig,
+                 BM25Config, RetrievalConfig, RerankConfig, RouterConfig,
+                 LLMConfig, CitationConfig, ObservabilityConfig
+  - Master Config container with validation
+  - Auto-creates required directories
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 02:40:00] src/ingest.py
+  Path: rag_system_v2/src\ingest.py
+  Purpose: Document ingestion with parent-child chunking
+  Inputs: PDF, MD, TXT, code files from docs directory
+  Outputs: chunks.jsonl with normalized text and metadata
+  Failure modes: PDF parse errors, encoding issues, empty files
+  Status: CREATED
+  ---
+  Components:
+  - Chunker: semantic boundary detection, parent/child creation
+  - ParentStore: SQLite storage for parent chunks
+  - Ingester: main pipeline yielding ChildChunk objects
+  - Deduplication: doc-level + chunk-level SHA-256
+  - Metadata: doc_id, parent_id, child_index, page_num, char offsets
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 02:45:00] src/index_bm25.py
+  Path: rag_system_v2/src\index_bm25.py
+  Purpose: BM25 (Okapi BM25) lexical index for hybrid retrieval
+  Inputs: chunks.jsonl
+  Outputs: bm25_index.pkl
+  Failure modes: Pickle corruption, ID mismatch with Qdrant
+  Status: CREATED
+  ---
+  Components:
+  - BM25Tokenizer: whitespace + punctuation, keeps crypto tickers
+  - BM25Index: inverted index, IDF, Okapi BM25 scoring
+  - CRITICAL: chunk_id MUST match Qdrant exactly
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 02:50:00] src/index_qdrant.py
+  Path: rag_system_v2/src\index_qdrant.py
+  Purpose: Qdrant vector database wrapper (local persistent mode)
+  Inputs: chunks.jsonl
+  Outputs: ./data/qdrant/ collection, id_mapping.json, embedding cache
+  Failure modes: Qdrant corruption, embedding model load failure
+  Status: CREATED
+  ---
+  Components:
+  - EmbeddingModel: sentence-transformers, CUDA auto-detect, L2 norm
+  - EmbeddingCache: disk cache by chunk_hash
+  - QdrantIndex: local persistent, stable point IDs via hash
+  - ID mapping: point_id <-> chunk_id persisted in JSON
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 02:55:00] src/merge_rrf.py
+  Path: rag_system_v2/src\merge_rrf.py
+  Purpose: Reciprocal Rank Fusion for hybrid retrieval
+  Inputs: Vector results, BM25 results
+  Outputs: Merged results with RRF scores
+  Failure modes: Empty inputs (handled gracefully)
+  Status: CREATED
+  ---
+  Components:
+  - RRFMerger: RRF with k=60 (standard)
+  - MergedResult: chunk_id, rrf_score, source breakdown
+  - get_agreement_signal(): router signals for retriever agreement
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 03:00:00] src/retrieve.py
+  Path: rag_system_v2/src\retrieve.py
+  Purpose: Main retrieval orchestrator
+  Inputs: Query string
+  Outputs: RetrievalResult with chunks, timing, quality signals
+  Failure modes: Index not loaded, embedding failure
+  Status: CREATED
+  ---
+  Pipeline:
+  1. Embed query -> Qdrant vector search (top 50)
+  2. Tokenize query -> BM25 search (top 50)
+  3. RRF merge -> fusion_top_k (40)
+  4. Parent expansion -> include parent context
+  5. Compute quality signals for router
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 03:05:00] src/rerank.py
+  Path: rag_system_v2/src\rerank.py
+  Purpose: Cross-encoder reranking with conditional logic
+  Inputs: Query, retrieval results
+  Outputs: Reranked chunks with confidence bands
+  Failure modes: Model load failure, timeout on large batches
+  Status: CREATED
+  ---
+  Components:
+  - CrossEncoderReranker: ms-marco-MiniLM-L-6-v2
+  - IMPORTANT: scores NOT 0-1, typical range: high>8, medium 3-8, low<3
+  - ConditionalReranker: skip if both retrievers confident + agree
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 03:10:00] src/router.py
+  Path: rag_system_v2/src\router.py
+  Purpose: Deterministic fail-closed decision router
+  Inputs: Query, retrieval result, rerank signals
+  Outputs: RouterOutput with decision, model tier, reasons
+  Failure modes: None (always produces a decision)
+  Status: CREATED
+  ---
+  Decisions (priority order):
+  1. REFUSE if injection detected
+  2. NO_RETRIEVAL if chitchat/system command
+  3. ASK_CLARIFY if query too short
+  4. REFUSE_NO_EVIDENCE if no evidence found
+  5. ASK_CLARIFY if low confidence
+  6. RETRIEVE_AND_ANSWER if high confidence + evidence
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 03:15:00] src/prompting.py
+  Path: rag_system_v2/src\prompting.py
+  Purpose: LLM prompt templates + LM Studio client
+  Inputs: Query, chunks, router decision
+  Outputs: LLM response with citations
+  Failure modes: LM Studio offline, timeout, malformed response
+  Status: CREATED
+  ---
+  Components:
+  - LMStudioClient: OpenAI-compatible, streaming support
+  - PromptBuilder: context formatting, injection-resistant framing
+  - LLMInterface: main interface combining client + builder
+  - SECURITY: retrieved text framed as QUOTED DATA
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 03:20:00] src/verify.py
+  Path: rag_system_v2/src\verify.py
+  Purpose: Citation verification (last line of defense)
+  Inputs: LLM response, chunks provided as context
+  Outputs: VerificationResult with pass/fail and issues
+  Failure modes: Parse errors (handled)
+  Status: CREATED
+  ---
+  Checks:
+  1. Response has citations
+  2. All citations are valid (exist in chunks)
+  3. Factual sentences have citations
+  4. Cited content supports claims (overlap heuristic)
+  Actions: ACCEPT, REGENERATE, or REFUSE
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 03:25:00] src/serve_cli.py
+  Path: rag_system_v2/src\serve_cli.py
+  Purpose: Interactive CLI orchestrating full pipeline
+  Inputs: User queries via interactive prompt
+  Outputs: Streaming responses, JSONL traces
+  Failure modes: All handled with clear error messages
+  Status: CREATED
+  ---
+  Pipeline:
+  1. Retrieve -> 2. Rerank -> 3. Route -> 4. Generate -> 5. Verify
+  Commands: /debug, /stream, /stats, /quit
+  Traces: ./logs/query_trace.jsonl
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 03:30:00] src/eval.py
+  Path: rag_system_v2/src\eval.py
+  Purpose: Evaluation harness for metrics and threshold calibration
+  Inputs: Test set (JSONL), chunks
+  Outputs: Evaluation reports, threshold recommendations
+  Failure modes: Empty test set, index not built
+  Status: CREATED
+  ---
+  Components:
+  - TestSetBuilder: generate test cases from chunks
+  - Evaluator: compute Recall@k, MRR, nDCG, router accuracy
+  - ThresholdCalibrator: find optimal thresholds from data
+  Commands: build-testset, run, calibrate
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 03:35:00] requirements.txt
+  Path: rag_system_v2/requirements.txt
+  Purpose: Python dependencies
+  Status: CREATED
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 03:40:00] README.md
+  Path: rag_system_v2/README.md
+  Purpose: Usage instructions, architecture, troubleshooting
+  Status: CREATED
+
+================================================================================
+                        SESSION 2026-01-07 SUMMARY
+================================================================================
+
+RESULTS:
+  - All 12 core modules created
+  - Full pipeline implemented: ingest -> index -> retrieve -> rerank -> route -> generate -> verify
+  - Interactive CLI with streaming support
+  - Evaluation harness with threshold calibration
+  - README with full setup instructions
+
+SYSTEM STATE:
+  - Code complete, NOT YET TESTED
+  - Indexes NOT built (need documents first)
+  - Thresholds are INITIAL DEFAULTS (need calibration)
+
+NEXT STEPS:
+  1. Install dependencies: pip install -r requirements.txt
+  2. Add documents to ./docs/
+  3. Run ingestion: python -m src.ingest --docs ./docs --output ./data/chunks.jsonl
+  4. Build indexes: 
+     - python -m src.index_qdrant --chunks ./data/chunks.jsonl
+     - python -m src.index_bm25 --chunks ./data/chunks.jsonl
+  5. Start LM Studio with model loaded
+  6. Test CLI: python -m src.serve_cli --debug
+  7. Build test set: python -m src.eval build-testset
+  8. Run evaluation: python -m src.eval run --testset ./tests/testset.jsonl
+  9. Calibrate thresholds: python -m src.eval calibrate --testset ./tests/testset.jsonl
+  10. Update thresholds in config.py with calibrated values
+
+RISKS IDENTIFIED:
+  1. Cross-encoder scores vary by model - MUST calibrate confidence bands
+  2. BM25 tokenizer may not match query style for crypto jargon - test with real queries
+  3. Parent expansion could hit token limits - needs budget enforcement
+  4. LM Studio model names may differ - update config.py with actual model names
+  5. First query latency high due to model loading - acceptable, warn user
+
+================================================================================
+
+
+================================================================================
+              FOUNDATION HARDENING SESSION - 2026-01-07 04:00 UTC
+================================================================================
+
+[Created: 2026-01-07 04:00:00] src/build_all.py
+  Path: rag_system_v2/src\build_all.py
+  Purpose: Full index rebuild orchestration with manifest verification
+  Inputs: docs directory path
+  Outputs: All indexes + manifest.json
+  Failure modes: Partial build → automatic rollback
+  Status: CREATED
+  ---
+  Components:
+  - Manifest: SHA-256 hashes of all artifacts
+  - BuildOrchestrator: atomic rebuild with backup/rollback
+  - Schema version tracking (v2)
+  Usage: python -m src.build_all --docs ./docs
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 04:05:00] src/doctor.py
+  Path: rag_system_v2/src\doctor.py
+  Purpose: System health check and diagnostics
+  Inputs: Existing indexes, manifest
+  Outputs: Health report (pass/warn/fail)
+  Failure modes: None (reports issues, doesn't crash)
+  Status: CREATED
+  ---
+  Checks performed:
+  1. File existence
+  2. Manifest verification
+  3. Chunks JSONL validation
+  4. BM25 index validation
+  5. Parents DB validation
+  6. Qdrant collection check
+  7. ID consistency across indexes
+  8. Sample query latency
+  9. LM Studio connectivity
+  Usage: python -m src.doctor [--quick] [--verbose]
+
+--------------------------------------------------------------------------------
+
+[Modified: 2026-01-07 04:10:00] src/index_qdrant.py
+  CHANGE: Fixed embedding cache namespacing
+  WHY: Switching embedding models would poison cached vectors
+  ---
+  Before: Cache key = chunk_hash only
+  After: Cache key = model_hash:chunk_hash
+  ---
+  New method: clear_model_cache() to wipe cache for current model
+
+--------------------------------------------------------------------------------
+
+[Modified: 2026-01-07 04:15:00] src/ingest.py
+  CHANGE: Added atomic writes and schema versioning
+  WHY: Prevent half-written files on crash, detect format drift
+  ---
+  Changes:
+  - SCHEMA_VERSION = 2 constant added
+  - ingest_to_jsonl() writes to .tmp then atomic rename
+  - Each chunk includes schema_version field
+  - Returns (chunk_count, doc_count) tuple
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 04:20:00] src/logging_config.py
+  Path: rag_system_v2/src\logging_config.py
+  Purpose: Centralized logging with rotation and structured JSON
+  Inputs: Configuration
+  Outputs: Log files with rotation (10MB max, 5 backups)
+  Status: CREATED
+  ---
+  Features:
+  - StructuredFormatter: JSON logs for machine parsing
+  - ReadableFormatter: Human-friendly console output
+  - StageLogAdapter: Adds stage context to all messages
+  - log_structured(): Helper for {stage, latency_ms, status}
+  - QueryTraceLogger: Dedicated query trace JSONL
+  Log files:
+  - logs/rag_v2.log (main, JSON structured)
+  - logs/rag_v2_errors.log (errors only)
+  - logs/query_trace.jsonl (query traces)
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 04:25:00] tests/test_smoke.py
+  Path: rag_system_v2/tests\test_smoke.py
+  Purpose: Foundation smoke tests - run before every change
+  Inputs: None (unit tests)
+  Outputs: Pass/fail per test
+  Status: CREATED
+  ---
+  Tests (10 total):
+  1. test_chunk_id_determinism - Same input = same ID
+  2. test_hash_consistency - SHA-256 stability
+  3. test_bm25_tokenization_stability - Tokenizer reproducibility
+  4. test_router_decision_mapping - All decisions covered
+  5. test_verify_fail_closed - No citations = FAIL
+  6. test_config_validation - Threshold ordering
+  7. test_manifest_schema_version - Schema v2
+  8. test_embedding_config_consistency - Dimension match
+  9. test_injection_detection_exists - Injection patterns caught
+  10. test_rrf_merge_correctness - RRF ranking correct
+  Usage: python tests/test_smoke.py OR pytest tests/ -v
+
+--------------------------------------------------------------------------------
+
+[Created: 2026-01-07 04:30:00] tests/__init__.py
+  Path: rag_system_v2/tests\__init__.py
+  Purpose: Test package marker
+  Status: CREATED
+
+================================================================================
+                    FOUNDATION HARDENING SUMMARY
+================================================================================
+
+WHAT WAS ADDED:
+  A. build_all.py - Full rebuild orchestration with manifest
+  B. Manifest verification system (manifest.json)
+  C. doctor.py - Comprehensive health check
+  D. Calibration runner (already in eval.py)
+  E. Embedding cache namespacing fix
+  F. Atomic writes + schema versioning
+  G. 10 smoke tests locking invariants
+  H. Structured logging with rotation
+
+FILES CREATED/MODIFIED:
+  - src/build_all.py (NEW - 466 lines)
+  - src/doctor.py (NEW - 642 lines)
+  - src/logging_config.py (NEW - 324 lines)
+  - src/index_qdrant.py (MODIFIED - cache namespacing)
+  - src/ingest.py (MODIFIED - atomic writes, schema version)
+  - tests/test_smoke.py (NEW - 417 lines)
+  - tests/__init__.py (NEW)
+
+NEXT STEPS:
+  1. Install dependencies: pip install -r requirements.txt
+  2. Run smoke tests: python tests/test_smoke.py
+  3. Add docs to ./docs/
+  4. Build all indexes: python -m src.build_all --docs ./docs
+  5. Run health check: python -m src.doctor
+  6. Start CLI: python -m src.serve_cli --debug
+
+RISKS MITIGATED:
+  - Half-rebuilt state → Manifest verification catches mismatches
+  - Corrupted files → SHA-256 hashes in manifest
+  - Embedding model switch → Namespaced cache prevents poisoning
+  - Crash during write → Atomic temp-file-then-rename pattern
+  - Foundation drift → Smoke tests lock invariants
+
+================================================================================

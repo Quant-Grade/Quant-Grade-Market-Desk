@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "created_at": "2026-04-15T22:55:06.527403",
+  "embedding_model": "BAAI/bge-small-en-v1.5",
+  "chunk_count": 2296,
+  "doc_count": 8,
+  "hashes": {
+    "chunks_sha256": "e5b243390340b25a5b7260f048dfe503cd4fc892f14a48c7a92f4c3fbc2931f4",
+    "bm25_index_sha256": "0ca93a57792e78abe061dbe558ad26bd9e7f94cbf6377712307c1c40b3466499",
+    "qdrant_collection_hash": "1e143e2c9f88e487a27e45d8bd7d99a5a8ebe52f7e659416ada3732521faab6c",
+    "parents_sha256": "ee9ea806b71855a66c8f50e19a0e3feefd213395e6ebd80f8ac0465a80469e38"
+  },
+  "paths": {
+    "chunks": "C:\\GitHub\\RAG_SYSTEM\\rag_system_v2\\data\\chunks.jsonl",
+    "bm25": "C:\\GitHub\\RAG_SYSTEM\\rag_system_v2\\data\\bm25_index.pkl",
+    "qdrant": "C:\\GitHub\\RAG_SYSTEM\\rag_system_v2\\data\\qdrant",
+    "parents": "C:\\GitHub\\RAG_SYSTEM\\rag_system_v2\\data\\parents.sqlite"
+  }
+}

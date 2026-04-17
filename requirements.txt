@@ -1,0 +1,8 @@
+# Alpha Engine / Orchestrator - run from project root
+# For full RAG (embeddings, BM25, etc.) also install: pip install -r rag_system_v2/requirements.txt
+#
+# RAG v2 paths: orchestrator sets RAG_V2_BASE_DIR to <this_repo>/rag_system_v2. Set RAG_V2_BASE_DIR
+# yourself if you run RAG CLIs from another cwd without going through orchestrator.py.
+
+openai>=1.0.0
+qdrant-client>=1.7.0

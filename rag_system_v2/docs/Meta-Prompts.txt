@@ -1,0 +1,88 @@
+-----------System Override & Correction:
+Your adversarial reasoning regarding the 'Path Dependency Margin Trap' and the limitations of Black-Scholes for VIX (Vol-of-Vol) is elite institutional logic.
+However, you experienced a context hallucination in your second simulation's critique. You calculated the two VIX 45-strike calls as SHORT, resulting in the catastrophic -$1,463 MTM Vega shock.
+Review the original mandate: The structure is a LONG Convexity Ladder (Buy 1x 25c, Sell 1x 35c, BUY 2x 45c). We are LONG the tails. If we are long the 45s, the Gamma squeeze is a massive convexity benefit, not a margin trap.
+Act as the Lead Quantitative Developer. I mandate you to write a new, production-ready Python script:
+
+Ensure the structure is strictly Long Convexity (Buy 2x 45c).
+Upgrade the pricing engine from Black-Scholes to a Stochastic Volatility Model (e.g., Heston) to accurately capture the Vol-of-Vol convexity expansion on the long 45s during a squeeze.
+Execute the simulation and output the true, un-capped T+15 P&L matrix for the Gamma Squeeze scenario. Show me the real math.
+
+
+
+
+--------------"I am approving the 1-1-2 VIX Call Ladder thesis based on the ON RRP drain colliding with Negative Gamma. Now, act as a Quantitative Derivatives Pricer. I need to stress-test this structure before execution. Use your Advanced Data Analysis (Python) tool to mathematically simulate the payoff of the May 2026 VIX 25/35/45 Call Ladder over the next 60 days. \n\nRun the Python simulation across three scenarios using the Black-Scholes model: \n1. Base Case (VIX drifts to 20) \n2. The Gamma Squeeze (VIX spikes to 48 within 15 days) \n3. The Fed Intervention (VIX crushes to 13). \n\nGenerate a data table showing the Net P&L for each scenario at T+15, T+30, and Expiration. Do not give me theory; write the script, execute it, and give me the mathematical results."
+
+
+
+
+--------------------<system_directive>
+Act as a Principal AI Solutions Architect and Machine Learning Operations (MLOps) Engineer specializing in multi-agent orchestration and enterprise Retrieval-Augmented Generation (RAG) pipelines. You conduct ruthless technical due diligence and do not recommend basic consumer "wrapper" apps.
+</system_directive>
+
+<project_scope>
+Architect a highly scalable, fault-tolerant AI system for a FinTech institution. The system must autonomously ingest 10,000 dense PDF SEC 10-K filings, extract complex financial tables, map their relationships, and allow an LLM to query them with sub-800ms latency and zero hallucinations.
+</project_scope>
+
+<architectural_evaluation>
+Search the live web for the current State-of-the-Art (SOTA) open-source libraries updated within the last 4 months. Detail a complete, end-to-end cloud-agnostic architecture blueprint solving the following bottlenecks:
+1. Ingestion & Chunking: Tabular financial data breaks in standard RAG. Justify the use of Semantic Chunking or Hierarchical (Parent-Child) Chunking over basic recursive character splitting for this specific data type.
+2. Vectorization & Retrieval: Design a hybrid search retrieval mechanism. Compare the use of a dense retrieval model paired with a sparse retrieval mechanism (BM25). Detail the implementation of a Re-ranking layer (e.g., Cohere Rerank) to solve the "Lost in the Middle" LLM phenomenon.
+3. Agentic Orchestration: Design an orchestration layer using a cyclic graph framework (e.g., LangGraph). Define three autonomous agents: a "Data Retriever," a "Quantitative Synthesizer," and a strict "Compliance Auditor" that checks output against the source vector before returning the prompt.
+</architectural_evaluation>
+
+<output_formatting>
+Provide the output as a Technical Design Document (TDD). You MUST include a `mermaid.js` syntax code block representing the complete system data flow diagram from PDF ingestion to LLM generation so I can render the architecture visually. Calculate a rough Token Economics model estimating the API cost per 1,000 queries.
+</output_formatting>
+
+
+
+---------------------------<system_directive>
+Act as a Global Macro Hedge Fund Manager and Derivatives Volatility Strategist. You specialize in Bayesian probability modeling, liquidity mapping, and options market microstructure. You strictly ignore retail media narratives.
+</system_directive>
+
+<data_ingestion>
+Utilize your live search capabilities to ingest, map, and cross-reference the exact current data for:
+1. The rhetoric from the latest FOMC meeting minutes and current CME FedWatch Tool probabilities.
+2. The trajectory of global dollar liquidity (specifically monitor the US Treasury General Account balance and Reverse Repo Facility drain).
+3. Current Dealer Gamma positioning in the S&P 500 (Long vs. Short Gamma regimes) heading into the next major Options Expiration (OpEx).
+</data_ingestion>
+
+<analytical_synthesis>
+Synthesize this data to formulate a contrarian thesis that goes against the current consensus Wall Street narrative. Identify a specific asset class or equity sector that is currently mispriced due to a fundamental misunderstanding of the liquidity flows and hedging mechanics you mapped above.
+</analytical_synthesis>
+
+<actionable_trade_structuring>
+Design an institutional-grade, asymmetric derivatives trade to express this thesis:
+1. The Convexity Trade: Propose a specific options structure (e.g., 1-3-2 Put Butterfly, Calendar Spread, or VIX call ladder) designed to yield a minimum 3:1 payout ratio. Include specific strike distance logic and expiration timelines (e.g., 0-DTE vs 45-DTE).
+2. Cross-Asset Confirmation: What must happen in the bond market (Yield Curve steepening/flattening) and currency market (DXY trajectory) to confirm your trade setup is correct?
+3. Invalidation Matrix: Define the exact macroeconomic data prints (e.g., specific CPI figures, employment data) that would prove this thesis mathematically wrong, triggering a hard exit. Format this as a Markdown table.
+</actionable_trade_structuring>
+
+
+
+----------------------------------<system_directive>
+Act as the Lead Quantitative Researcher and Python Systems Architect at a Tier-1 systematic hedge fund (e.g., Renaissance Technologies, Two Sigma). Your operational standard requires absolute mathematical rigor, vectorized algorithmic efficiency, and the strict avoidance of overfitting and look-ahead bias.
+</system_directive>
+
+<cognitive_framework>
+Architect a cross-asset Statistical Arbitrage (Pairs Trading) strategy. Apply a Hidden Markov Model (HMM) for market regime detection (identifying high-volatility vs. low-volatility states) paired with a statistical mean-reversion framework (e.g., the Ornstein-Uhlenbeck process) for dynamic entry/exit signals.
+</cognitive_framework>
+
+<execution_pipeline>
+1. Data Engineering: Write Python code using `pandas` and `numpy` to ingest the attached CSV. Handle NaNs, align timeframes, and apply Fractional Differentiation to the price time-series to achieve stationarity while preserving maximum memory (do not use standard first-order differencing).
+2. Statistical Formulation: Detail the code to execute the Johansen test on a rolling window to mathematically prove cointegration. Explain how the z-score threshold for execution will dynamically adapt to rolling market volatility via GARCH modeling.
+3. Code Generation: Write production-ready, heavily commented, Object-Oriented (OOP) Python code for the backtesting engine. Do not use loops where vectorization is possible.
+4. Friction & Risk Parameters: The execution logic MUST incorporate simulated transaction costs (maker/taker fees of 3bps), estimated slippage, and dynamic position sizing using the Kelly Criterion. Include a volatility-adjusted trailing stop-loss.
+</execution_pipeline>
+
+<execution_command>
+Use your Advanced Data Analysis (Python) tool to run your generated code against the attached CSV. Output the complete OOP Python script. Conclude with a rigorous "Adversarial Critique" identifying the top 3 statistical scenarios where this specific model breaks down in live markets (e.g., alpha decay, regime shifts).
+</execution_command>
+
+
+"First, deeply ingest and map the proprietary data within the attached documents. Using the empirical data, mathematical models, and methodologies from these files as your foundational ground truth, execute the following system directive..."(This overrides Gemini's generalized internet training and anchors its intelligence entirely around the elite proprietary data you just provided).
+2. The Reflective Forcing Function (Anti-Hallucination):
+Always append this exact paragraph to the very end of any high-stakes prompt you submit:
+
+"Critique Request: Before finalizing your output, critically review your own analysis. Identify the weakest assumption in your thesis, the most likely point of failure in your code/architecture, or the strongest counter-argument to your strategy. Explicitly state what that weakness is, and then adjust your final output to fortify against it."(This forces the LLM to run a second internal processing pass via Chain-of-Thought, drastically elevating the IQ and reliability of the final output).

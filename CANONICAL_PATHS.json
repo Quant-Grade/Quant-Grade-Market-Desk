@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "repo_root_note": "All path values are POSIX-style strings relative to the repository root unless noted.",
+  "orchestrator_entrypoint": "orchestrator.py",
+  "rag_v2_root": "rag_system_v2",
+  "repo_paths_ssot": "rag_system_v2/src/repo_paths.py",
+  "repo_paths_role": "Canonical RAG v2 on-disk filenames and default base resolution (RAG_V2_BASE_DIR); do not duplicate path logic outside this module for engine artifacts.",
+  "alpha_checkpoint_jsonl": "rag_system_v2/data/alpha_concepts.jsonl",
+  "idea_log_md": "idea_log.md",
+  "orchestrator_hardening_plan": "ORCHESTRATOR_HARDENING_PLAN.md",
+  "operator_ledger": "fix_plan.md",
+  "verification_captures": {
+    "artifacts_root": "artifacts/verification",
+    "glob": "artifacts/verification/gate2_*.txt",
+    "count_current": 11
+  }
+}

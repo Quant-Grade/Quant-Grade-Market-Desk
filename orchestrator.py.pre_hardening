@@ -1,0 +1,1058 @@
+"""
+Dual-PC AI Loop Orchestrator (Idea-Compounding / Theory-Crafting Engine)
+========================================================================
+24/7 loop: Builder PC (idea expansion + memory query) → RAG → Leader PC (evaluation, next concept).
+Pure architectural planning and theory—no executable code. Logs to idea_log.md in project root.
+"""
+
+import json
+import os
+import re
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+# --- RAG base dir MUST be set before any RAG config/import ---
+# Single layout: <repo_root>/rag_system_v2  (clone-relative; no machine-specific paths).
+_script_dir = Path(__file__).resolve().parent
+_rag_v2_base = (_script_dir / "rag_system_v2").resolve()
+os.environ["RAG_V2_BASE_DIR"] = str(_rag_v2_base)
+IDEA_LOG_PATH = _script_dir / "idea_log.md"
+
+# Domain-driven alpha engine configuration
+DOMAINS = {
+    "trading": {
+        "constitution": (
+            "1. Focus strictly on market microstructure, algorithmic execution theory, and data analysis concepts. "
+            "2. 100% US-Compliant only. No Binance or outside-of-USA compliance. "
+            "3. STRICTLY FORBIDDEN: yield farming, airdrop hunting, running validators/nodes, revenge trading, or sniper entries. Do not mention them. "
+            "4. Ruthlessly attack slippage/fee assumptions in mid-frequency trading."
+        ),
+        "seed": (
+            "Design a US-compliant, mid-frequency trading execution framework that rigorously attacks slippage and fee "
+            "assumptions in US markets, using market microstructure and data analysis concepts only."
+        ),
+    },
+}
+
+ACTIVE_DOMAIN = "trading"
+ACTIVE_DOMAIN_CONFIG = DOMAINS[ACTIVE_DOMAIN]
+
+# .env loading: prefer python-dotenv; fallback to manual parse
+try:
+    from dotenv import load_dotenv
+    _has_dotenv = True
+except ImportError:
+    _has_dotenv = False
+
+def _load_env_file(env_path: Path) -> None:
+    if not env_path.exists():
+        return
+    with open(env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                key = k.strip()
+                val = v.strip().strip("'\"")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+
+# --- Config constants ---
+# No key = no Authorization header (for local LM Studio with auth disabled). Set OPENAI_API_KEY or LM_STUDIO_API_KEY in .env if the endpoint requires auth.
+API_KEY = os.environ.get("OPENAI_API_KEY") or os.environ.get("LM_STUDIO_API_KEY") or None
+LOOP_SLEEP_SEC = 2.0
+LMSTUDIO_BASE_URL = "http://127.0.0.1:1234/v1"
+ENV_FILENAME = ".env"
+BUILDER_IP_KEY = "BUILDER_IP"
+WEBHOOK_URL_KEY = "ALPHA_ENGINE_WEBHOOK_URL"
+RECAP_INTERVAL_SEC = 30 * 60  # 30 minutes
+
+# --- ANSI colors (Windows 10+ supports VT); disable when unsupported so raw escapes don't appear ---
+_use_ansi = (
+    os.environ.get("ALPHA_NO_COLOR", "").strip() != "1"
+    and getattr(sys.stdout, "isatty", lambda: False)()
+)
+if _use_ansi:
+    C_RESET = "\033[0m"
+    C_BUILDER = "\033[36m"   # Cyan
+    C_RAG = "\033[33m"       # Yellow
+    C_LEADER = "\033[32m"    # Green
+    C_ERR = "\033[31m"       # Red
+    C_DIM = "\033[2m"        # Dim
+else:
+    C_RESET = C_BUILDER = C_RAG = C_LEADER = C_ERR = C_DIM = ""
+
+# RAG V2 src path (after env so RAG_V2_BASE_DIR is set)
+_rag_src = _rag_v2_base / "src"
+if _rag_src.exists():
+    sys.path.insert(0, str(_rag_src))
+else:
+    raise FileNotFoundError(f"RAG src not found: {_rag_src}")
+
+from openai import OpenAI
+
+# Role identifiers for future 4-role engine
+ROLE_BUILDER = "builder"
+ROLE_COMPRESSOR = "compressor"
+ROLE_REDTEAM = "redteam"
+ROLE_LEADER = "leader"
+
+
+def ensure_builder_ip() -> str:
+    """
+    Load .env; if missing create it. If BUILDER_IP is empty, prompt user to type it,
+    write to .env and set os.environ. Returns the Builder IP.
+    """
+    env_path = _script_dir / ENV_FILENAME
+    if _has_dotenv:
+        load_dotenv(env_path)
+    else:
+        _load_env_file(env_path)
+
+    ip = (os.environ.get(BUILDER_IP_KEY) or "").strip()
+    if ip:
+        return ip
+
+    if not env_path.exists():
+        env_path.write_text(
+            f"{BUILDER_IP_KEY}=\n"
+            f"{WEBHOOK_URL_KEY}=https://discord.com/api/webhooks/1435560268196352020/NJoXVTTS6j-mnrY3-tNN2RUdlTasQ56lYbwmx7kIcRIZ-EUyEL__cp_5YVOSxF0thvFz\n",
+            encoding="utf-8",
+        )
+        print(f"{C_DIM}Created {ENV_FILENAME} in {_script_dir}{C_RESET}")
+
+    print(f"{C_LEADER}Enter the Builder PC's IP address (e.g. 192.168.1.100):{C_RESET} ", end="")
+    try:
+        ip = input().strip()
+    except EOFError:
+        ip = ""
+    if not ip:
+        print(f"{C_ERR}BUILDER_IP is required. Set it in {ENV_FILENAME} or run again and enter IP.{C_RESET}")
+        sys.exit(1)
+
+    with open(env_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    with open(env_path, "w", encoding="utf-8") as f:
+        for line in lines:
+            if line.strip().startswith(f"{BUILDER_IP_KEY}="):
+                f.write(f"{BUILDER_IP_KEY}={ip}\n")
+            else:
+                f.write(line)
+        if not any(line.strip().startswith(f"{BUILDER_IP_KEY}=") for line in lines):
+            f.write(f"{BUILDER_IP_KEY}={ip}\n")
+    os.environ[BUILDER_IP_KEY] = ip
+    return ip
+
+
+def fetch_loaded_model_id(base_url: str, timeout: float = 10.0) -> str:
+    """
+    GET base_url/models (OpenAI-compatible /v1/models). Parse JSON; return the 'key'
+    of the first LLM that has loaded_instances. Raises on failure or no loaded model.
+    """
+    url = base_url.rstrip("/") + "/models"
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch models from {url}: {e}") from e
+
+    models = data.get("models") if isinstance(data, dict) else data
+    if not models:
+        raise RuntimeError(f"No models in response from {url}")
+
+    for m in models:
+        if m.get("type") != "llm":
+            continue
+        instances = m.get("loaded_instances") or []
+        if instances:
+            return m.get("key") or m.get("id") or str(m.get("display_name", ""))
+
+    raise RuntimeError(
+        f"No loaded LLM on {base_url}. Load a model in LM Studio and try again."
+    )
+
+
+def _safe_console(s: str) -> str:
+    """Make string safe for Windows console output (avoid charmap/cp1252 encode errors on non-ASCII)."""
+    if not s:
+        return s
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        return s.encode(enc, errors="replace").decode(enc)
+    except (LookupError, TypeError):
+        return s.encode("utf-8", errors="replace").decode("utf-8")
+
+
+def log(tag: str, color: str, msg: str, detail: str = "") -> None:
+    ts = time.strftime("%H:%M:%S", time.localtime())
+    line = f"{color}[{tag}]{C_RESET} {ts} {msg}"
+    if detail:
+        line += f"\n{C_DIM}   {detail}{C_RESET}"
+    print(_safe_console(line))
+
+
+def _extract_json_object(text: str):
+    """
+    Try to robustly extract a JSON object from LM output that may include
+    think tags, markdown fences, or surrounding prose.
+    Returns (obj or None, debug_info dict).
+    """
+    debug = {
+        "raw_len": len(text),
+        "preview": (text[:240].replace("\n", " ") if text else ""),
+        "used_strategy": None,
+    }
+    if not text:
+        return None, debug
+
+    cleaned = text.strip()
+
+    # Strip markdown code fences if present
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+
+    # Drop <think>...</think> blocks that some models emit
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE).strip()
+
+    # First attempt: full cleaned string
+    try:
+        obj = json.loads(cleaned)
+        debug["used_strategy"] = "full_cleaned"
+        return obj, debug
+    except Exception:
+        pass
+
+    # Second attempt: first {...} region inside the text
+    m = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    if m:
+        candidate = m.group(0).strip()
+        debug["candidate_len"] = len(candidate)
+        try:
+            obj = json.loads(candidate)
+            debug["used_strategy"] = "brace_region"
+            return obj, debug
+        except Exception as e:
+            debug["candidate_error"] = str(e)
+
+    return None, debug
+
+
+def call_builder(
+    client: OpenAI, model_id: str, task: str
+) -> tuple[str, str]:
+    """Call Builder PC. Returns (idea_expansion, query_memory_for). Enforces JSON mode."""
+    system = (
+        "You are the Builder. Your role is strictly architectural planning, theory-crafting, and expanding on concepts—"
+        "not writing physical scripts or executable code. You receive the current concept/task and must output strictly "
+        "a single JSON object, no other text.\n\n"
+        f"ACTIVE DOMAIN CONSTITUTION:\n{ACTIVE_DOMAIN_CONFIG['constitution']}\n\n"
+        "JSON keys:\n"
+        '- "idea_expansion": string, your theoretical expansion, architecture notes, or conceptual breakdown for this '
+        'task (can be empty "" if no expansion yet).\n'
+        '- "query_memory_for": string, a short query to look up in local memory/RAG (e.g. "order book imbalance" or '
+        '"VWAP execution theory"). Use "" if nothing to look up.\n\n'
+        "Output only the JSON object, no markdown, no explanation."
+    )
+
+    try:
+        r = client.chat.completions.create(
+            model=model_id,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"Current concept/task:\n{task}"},
+            ],
+            temperature=0.3,
+        )
+        content = (r.choices[0].message.content or "").strip()
+        data, debug = _extract_json_object(content)
+        idea = (data.get("idea_expansion", "") or "").strip() if data else ""
+        query = (data.get("query_memory_for", "") or "").strip() if data else ""
+        if data is None or (not idea and not query):
+            preview = _safe_console((content[:120].replace("\n", " ")) if content else "")
+            keys_str = str(list(data.keys())) if isinstance(data, dict) else "n/a"
+            log(
+                "BUILDER",
+                C_DIM,
+                "Builder empty/invalid diagnostic",
+                f"raw_len={len(content)} preview={preview} parsed_obj={data is not None} keys={keys_str}",
+            )
+        if data is None:
+            log(
+                "BUILDER",
+                C_ERR,
+                "Failed to parse Builder JSON",
+                f"raw_len={debug.get('raw_len')} "
+                f"strategy={debug.get('used_strategy')} "
+                f"preview={debug.get('preview')}",
+            )
+            return "", ""
+        # One retry when parsed JSON has correct keys but both fields empty.
+        if (
+            isinstance(data, dict)
+            and "idea_expansion" in data
+            and "query_memory_for" in data
+            and not idea
+            and not query
+        ):
+            retry_user = (
+                f"Current concept/task:\n{task}\n\n"
+                "Your previous response had empty idea_expansion and empty query_memory_for. That is invalid. "
+                "Requirement: idea_expansion must be at least one full sentence. "
+                "Requirement: query_memory_for must be 2-6 words (e.g. 'order book imbalance' or 'VWAP execution theory'). "
+                "Output only the JSON object, no markdown, no explanation."
+            )
+            r2 = client.chat.completions.create(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": retry_user},
+                ],
+                temperature=0.2,
+            )
+            content2 = (r2.choices[0].message.content or "").strip()
+            data2, _ = _extract_json_object(content2)
+            idea2 = (data2.get("idea_expansion", "") or "").strip() if data2 else ""
+            query2 = (data2.get("query_memory_for", "") or "").strip() if data2 else ""
+            if not idea2 and not query2:
+                preview2 = _safe_console((content2[:120].replace("\n", " ")) if content2 else "")
+                keys_str2 = str(list(data2.keys())) if isinstance(data2, dict) else "n/a"
+                log(
+                    "BUILDER",
+                    C_ERR,
+                    "Builder retry failed",
+                    f"raw_len={len(content2)} preview={preview2} keys={keys_str2}",
+                )
+                return "", ""
+            return idea2, query2
+        return idea, query
+    except Exception as e:
+        log("BUILDER", C_ERR, "API error", str(e))
+        return "", ""
+
+
+def _maybe_append_alpha_context(context: str, query_memory_for: str) -> str:
+    """When ALPHA_USE_SELF_MEMORY=1, append Alpha self-memory block from isolated indices."""
+    if os.environ.get("ALPHA_USE_SELF_MEMORY", "").strip() != "1":
+        return context
+    try:
+        from query_alpha_memory import get_alpha_self_memory_context
+        alpha_block = get_alpha_self_memory_context(query_memory_for, top_k=3)
+        if alpha_block:
+            context = context + "\n\n[Alpha self-memory]\n" + alpha_block
+            log("RAG", C_RAG, "Appended Alpha self-memory", f"query={query_memory_for[:50]}...")
+    except Exception as e:
+        log("RAG", C_DIM, "Alpha self-memory skipped", str(e))
+    return context
+
+
+def get_rag_context(query_memory_for: str) -> str:
+    """Route query; if RETRIEVE_AND_ANSWER, retrieve and return top-3 chunk context; else 'No local memory found.'"""
+    if not query_memory_for.strip():
+        log("RAG", C_RAG, "Empty query → no retrieval", "")
+        return "No local memory found."
+
+    try:
+        from router import Router, RouterDecision
+        from retrieve import Retriever
+
+        router = Router()
+        out = router.route(query_memory_for)
+        log("RAG", C_RAG, f"Decision: {out.decision.value}", f"reason_codes={out.reason_codes}")
+
+        if out.decision != RouterDecision.RETRIEVE_AND_ANSWER:
+            context = "No local memory found."
+        else:
+            retriever = Retriever()
+            result = retriever.retrieve(query_memory_for, top_k=5, include_parents=True)
+            chunks = result.chunks[:3]
+            if not chunks:
+                log("RAG", C_RAG, "Retrieve returned 0 chunks", "")
+                context = "No local memory found."
+            else:
+                parts = []
+                for i, c in enumerate(chunks, 1):
+                    parts.append(f"[{i}] {c.text.strip()}")
+                context = "\n\n".join(parts)
+                log("RAG", C_RAG, f"Using top {len(chunks)} chunks", f"query={query_memory_for[:60]}...")
+
+        return _maybe_append_alpha_context(context, query_memory_for)
+    except Exception as e:
+        log("RAG", C_ERR, "RAG error", str(e))
+        return _maybe_append_alpha_context("No local memory found.", query_memory_for)
+
+
+LEADER_CONSTITUTION = ACTIVE_DOMAIN_CONFIG["constitution"]
+
+# Safe character budget for RAG context sent to Leader (~1200 tokens at ~4 chars/token to avoid 4096 overflow)
+LEADER_RAG_CONTEXT_MAX_CHARS = 5000
+
+# Safe character budget for Builder expansion passed to Compressor/RedTeam (avoid 4096 context overflow)
+ROLE_INPUT_MAX_CHARS = 4000
+
+
+def _compact_role_input(text: str, role_label: str = "role", max_chars: int = ROLE_INPUT_MAX_CHARS) -> str:
+    """Trim role input (e.g. Builder expansion) to fit context window; preserve the start, add truncation marker."""
+    if not text or len(text) <= max_chars:
+        return text
+    before = len(text)
+    out = text[:max_chars].rstrip() + "\n\n... [truncated]"
+    log("ORCH", C_DIM, "Role input compacted", f"role={role_label} before={before} after={len(out)}")
+    return out
+
+
+def _compact_leader_rag_context(rag_context: str, max_chars: int = LEADER_RAG_CONTEXT_MAX_CHARS) -> str:
+    """Trim RAG context to fit Leader context window; preserve [Alpha self-memory] section and labels."""
+    if not rag_context or len(rag_context) <= max_chars:
+        return rag_context
+    before = len(rag_context)
+    alpha_marker = "[Alpha self-memory]"
+    if alpha_marker in rag_context:
+        idx = rag_context.index(alpha_marker)
+        main_part = rag_context[:idx].strip()
+        alpha_part = rag_context[idx:]
+        budget_main = max(800, max_chars - len(alpha_part) - 80)
+        if len(main_part) > budget_main:
+            main_part = main_part[:budget_main].rstrip() + "\n\n... [truncated]"
+        out = main_part + "\n\n" + alpha_part
+    else:
+        out = rag_context[:max_chars].rstrip() + "\n\n... [truncated]"
+    if len(out) > max_chars:
+        out = out[:max_chars].rstrip() + "\n... [truncated]"
+    log("LEADER", C_DIM, "Leader context compacted", f"before={before} after={len(out)}")
+    return out
+
+
+def call_leader(
+    client: OpenAI,
+    model_id: str,
+    idea_expansion: str,
+    rag_context: str,
+    current_task: str,
+) -> tuple[str, str]:
+    """Ask Leader to evaluate the idea vs RAG and return (next_task, state_tracker_json)."""
+    system = (
+        LEADER_CONSTITUTION.strip()
+        + "\n\n"
+        + """You are the Leader. You receive:
+1) The Builder's idea expansion (theory, architecture, concepts) for the current task.
+2) Context from local memory (RAG) — or "No local memory found."
+3) The current concept/task.
+
+Your job: Evaluate the idea expansion against the RAG facts (if any). Then output a single JSON object with this exact shape:
+{
+  "core_objective_anchor": "<1-sentence absolute goal>",
+  "ledger_delta": "<Keep/Cut/Delay decisions made THIS round>",
+  "highest_active_risk": "<Greatest threat to implementation or value>",
+  "baton_pass": {
+    "next_task": "<exact next concept/task for the Builder to expand>"
+  }
+}
+
+Do not include any extra keys or fields. Do not wrap in markdown or backticks. Output ONLY this JSON object."""
+    )
+
+    user = f"""Current concept/task:
+{current_task}
+
+Builder's idea expansion:
+```
+{idea_expansion if idea_expansion else "(no expansion yet)"}
+```
+
+RAG context:
+{rag_context}
+
+What is the exact next concept or idea for the Builder to expand upon?"""
+
+    try:
+        r = client.chat.completions.create(
+            model=model_id,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.2,
+        )
+        raw = (r.choices[0].message.content or "").strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```\s*$", "", raw)
+
+        state: dict | None = None
+        baton_next: str | None = None
+
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict):
+                core = str(obj.get("core_objective_anchor", "") or "")
+                ledger = str(obj.get("ledger_delta", "") or "")
+                risk = str(obj.get("highest_active_risk", "") or "")
+                baton = obj.get("baton_pass") or {}
+                baton_next = baton.get("next_task") or None
+                state = {
+                    "core_objective_anchor": core,
+                    "ledger_delta": ledger,
+                    "highest_active_risk": risk,
+                    "baton_pass": {
+                        "next_task": baton_next or current_task,
+                    },
+                }
+        except Exception:
+            state = None
+
+        if state is None:
+            # Fallback: treat raw text as next_task, synthesize minimal state
+            next_task = raw
+            if "<think>" in next_task:
+                next_task = re.sub(r"<think>[\s\S]*?</think>", "", next_task, flags=re.IGNORECASE).strip()
+            next_task = re.sub(r"\s+", " ", next_task).strip()
+            baton_next = next_task or current_task
+            state = {
+                "core_objective_anchor": current_task,
+                "ledger_delta": "fallback_unstructured_leader_output",
+                "highest_active_risk": "",
+                "baton_pass": {"next_task": baton_next},
+            }
+        else:
+            # Use baton_next from JSON but clean it
+            next_task = baton_next or current_task
+            if "<think>" in next_task:
+                next_task = re.sub(r"<think>[\s\S]*?</think>", "", next_task, flags=re.IGNORECASE).strip()
+            next_task = re.sub(r"\s+", " ", next_task).strip()
+            state["baton_pass"]["next_task"] = next_task or current_task
+
+        state_json = json.dumps(state, ensure_ascii=False)
+        return next_task or current_task, state_json
+    except Exception as e:
+        log("LEADER", C_ERR, "API error", str(e))
+        fallback_state = {
+            "core_objective_anchor": current_task,
+            "ledger_delta": "leader_call_failed",
+            "highest_active_risk": "",
+            "baton_pass": {"next_task": current_task},
+        }
+        return current_task, json.dumps(fallback_state, ensure_ascii=False)
+
+
+def call_role(
+    client: OpenAI,
+    model_id: str,
+    role: str,
+    *,
+    task: str = "",
+    idea_expansion: str = "",
+    rag_context: str = "",
+) -> tuple[str, str]:
+    """
+    Generic role caller scaffold.
+    - Builder: returns (idea_expansion, query_memory_for) via JSON.
+    - Compressor / RedTeam: returns (text_output, "") as plain text for now.
+    - Leader: returns (next_task, state_tracker_json).
+    """
+    if role == ROLE_BUILDER:
+        return call_builder(client, model_id, task)
+
+    if role == ROLE_LEADER:
+        next_task, state_tracker = call_leader(client, model_id, idea_expansion, rag_context, task)
+        return next_task, state_tracker
+
+    if role == ROLE_COMPRESSOR:
+        system = (
+            ACTIVE_DOMAIN_CONFIG["constitution"]
+            + "\n\nYou are the Compressor. Take the Builder's idea expansion and any RAG context, "
+            "and return a sharply compressed, MVP-focused summary that keeps only the highest-EV elements. "
+            "Do not invent new requirements; cut bloat and redundancy."
+        )
+        user = f"Current concept/task:\n{task}\n\nBuilder expansion:\n{idea_expansion}\n\nRAG context:\n{rag_context}"
+        try:
+            r = client.chat.completions.create(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.2,
+                max_tokens=1024,
+            )
+            text = (r.choices[0].message.content or "").strip()
+            return text, ""
+        except Exception as e:
+            log("ORCH", C_ERR, "Compressor API error", str(e))
+            return "", ""
+
+    if role == ROLE_REDTEAM:
+        system = (
+            ACTIVE_DOMAIN_CONFIG["constitution"]
+            + "\n\nYou are the Red Team. Attack the Builder's idea and any compressed summary or RAG facts. "
+            "Surface slippage/fee risks, liquidity risks, compliance breaks, and fake sophistication."
+        )
+        user = f"Current concept/task:\n{task}\n\nBuilder expansion:\n{idea_expansion}\n\nRAG context:\n{rag_context}"
+        try:
+            r = client.chat.completions.create(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.2,
+                max_tokens=1024,
+            )
+            text = (r.choices[0].message.content or "").strip()
+            return text, ""
+        except Exception as e:
+            log("ORCH", C_ERR, "RedTeam API error", str(e))
+            return "", ""
+
+    log("ORCH", C_ERR, "Unknown role passed to call_role", role)
+    return "", ""
+
+
+def append_to_idea_log(
+    round_num: int,
+    idea_expansion: str,
+    compressor_output: str,
+    redteam_output: str,
+    leader_evaluation: str,
+    state_tracker_json: str,
+    organized_memory: str = "",
+) -> None:
+    """Append one round's Builder expansion, Compressor output, Red Team attacks, Leader evaluation, State Tracker, and optional Organized memory to idea_log.md."""
+    with open(IDEA_LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(f"\n## Round {round_num}\n\n")
+        f.write("### Builder expansion\n\n")
+        f.write(idea_expansion if idea_expansion.strip() else "(none)\n")
+        f.write("\n\n### Compressor summary\n\n")
+        f.write(compressor_output.strip() + "\n")
+        f.write("\n\n### Red Team attacks\n\n")
+        f.write(redteam_output.strip() + "\n")
+        f.write("\n\n### Leader evaluation / next concept\n\n")
+        f.write(leader_evaluation.strip() + "\n")
+        f.write("\n\n### State Tracker\n\n")
+        f.write((state_tracker_json or "").strip() + "\n\n")
+        if (organized_memory or "").strip():
+            f.write("\n### Organized memory\n\n")
+            f.write(organized_memory.strip() + "\n\n")
+
+
+def append_alpha_concept_jsonl(
+    round_num: int,
+    current_task: str,
+    idea_expansion: str,
+    query_memory_for: str,
+    compressor_output: str,
+    redteam_output: str,
+    leader_next_task: str,
+    state_tracker_json: str,
+    organized_memory: str = "",
+) -> None:
+    """Append one machine-readable Alpha Engine round record to alpha_concepts.jsonl."""
+    try:
+        from datetime import datetime
+
+        alpha_path = _rag_v2_base / "data" / "alpha_concepts.jsonl"
+        alpha_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Parse state tracker if possible, otherwise store raw string under "raw"
+        state_parsed: dict | None = None
+        if state_tracker_json:
+            try:
+                obj = json.loads(state_tracker_json)
+                if isinstance(obj, dict):
+                    state_parsed = obj
+            except Exception:
+                state_parsed = None
+
+        state_value = state_parsed if state_parsed is not None else {"raw": state_tracker_json or ""}
+
+        record = {
+            "round": round_num,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "current_task": current_task,
+            "builder_expansion": idea_expansion,
+            "query_memory_for": query_memory_for,
+            "compressor_summary": compressor_output,
+            "redteam_attacks": redteam_output,
+            "leader_next_task": leader_next_task,
+            "state_tracker": state_value,
+            "organized_memory": (organized_memory or "").strip(),
+        }
+
+        with alpha_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log("ORCH", C_ERR, "alpha_concepts.jsonl append error", str(e))
+
+
+def compile_state_summary(
+    client: OpenAI,
+    model_id: str,
+    round_num: int,
+    last_round_texts: list[str],
+) -> str:
+    """
+    Ask Leader to ruthlessly compress the last 5 rounds into a 3-bullet 'State of the Theory'.
+    """
+    system = (
+        "You are a ruthless compressor. Read the last 5 rounds of theory-crafting. "
+        "Output a strict, 3-bullet-point 'State of the Theory' summary extracting only the highest EV concepts. "
+        "Do not include fluff."
+    )
+
+    joined_rounds = "\n\n".join(last_round_texts)
+    user = f"Last 5 rounds up to round {round_num}:\n\n{joined_rounds}"
+
+    try:
+        r = client.chat.completions.create(
+            model=model_id,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.1,
+        )
+        summary = (r.choices[0].message.content or "").strip()
+        return summary
+    except Exception as e:
+        log("LEADER", C_ERR, "State summary API error", str(e))
+        return ""
+
+
+def prepend_state_summary(round_num: int, summary: str) -> None:
+    """
+    Prepend the 3-bullet 'State of the Theory' summary to idea_log.md.
+    """
+    if not summary.strip():
+        return
+
+    existing = ""
+    if IDEA_LOG_PATH.exists():
+        existing = IDEA_LOG_PATH.read_text(encoding="utf-8")
+
+    header = f"### STATE OF THE THEORY (Round {round_num})\n\n"
+    new_content = header + summary.strip() + "\n\n" + existing
+    IDEA_LOG_PATH.write_text(new_content, encoding="utf-8")
+
+
+def compile_organized_memory(
+    client: OpenAI,
+    model_id: str,
+    current_task: str,
+    idea_expansion: str,
+    compressor_output: str,
+    redteam_output: str,
+    next_task: str,
+    state_tracker_json: str,
+) -> str:
+    """
+    Turn current round outputs into one compact, sectioned, deduplicated memory block.
+    Uses same LM/client as compile_state_summary. Output: stable headers, low noise, machine-readable.
+    Built from provided fields only; no hallucinated content.
+    """
+    system = (
+        "You are an organizer. You receive one round's raw outputs. "
+        "Output a single compact text block with these exact section headers (one per line, all caps): "
+        "CONCEPT | EXPANSION | COMPRESSED | RISKS | NEXT | STATE. "
+        "Under each header write only deduplicated, tight, machine-readable bullets or one short paragraph. "
+        "Use only facts from the provided inputs; do not add or invent anything. No filler, no repetition across sections."
+    )
+    user_parts = [
+        "[CONCEPT]", (current_task or "").strip(),
+        "[EXPANSION]", (idea_expansion or "").strip()[:4000],
+        "[COMPRESSOR]", (compressor_output or "").strip()[:2000],
+        "[REDTEAM]", (redteam_output or "").strip()[:2000],
+        "[NEXT]", (next_task or "").strip()[:2000],
+        "[STATE]", (state_tracker_json or "").strip()[:1500],
+    ]
+    user = "\n\n".join(user_parts)
+
+    try:
+        r = client.chat.completions.create(
+            model=model_id,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.1,
+            max_tokens=1024,
+        )
+        return (r.choices[0].message.content or "").strip()
+    except Exception as e:
+        log("ORCH", C_ERR, "Organizer API error", str(e))
+        return ""
+
+
+def fallback_organized_memory(
+    current_task: str,
+    idea_expansion: str,
+    compressor_output: str,
+    redteam_output: str,
+    next_task: str,
+    state_tracker_json: str,
+) -> str:
+    """
+    Deterministic fallback when LM organizer fails or returns empty.
+    Same section order as LM organizer: CONCEPT | EXPANSION | COMPRESSED | RISKS | NEXT | STATE.
+    Derived only from current round values; compact, machine-readable, no filler.
+    """
+    _cap = 600  # max chars per section to keep compact
+
+    def _trim(s: str) -> str:
+        out = " ".join((s or "").split())
+        return out[: _cap] + ("..." if len(out) > _cap else "")
+
+    concept = _trim(current_task) or "(none)"
+    expansion = _trim(idea_expansion) or "(none)"
+    compressed = _trim(compressor_output) or "(none)"
+    risks = _trim(redteam_output) or "(none)"
+    nxt = _trim(next_task) or "(none)"
+    state_raw = (state_tracker_json or "").strip()
+    state = _trim(state_raw) if state_raw else "(none)"
+
+    return (
+        f"CONCEPT | {concept}\n"
+        f"EXPANSION | {expansion}\n"
+        f"COMPRESSED | {compressed}\n"
+        f"RISKS | {risks}\n"
+        f"NEXT | {nxt}\n"
+        f"STATE | {state}"
+    )
+
+
+def send_webhook_recap(webhook_url: str, payload: dict) -> None:
+    """
+    Send a Discord-friendly recap payload to the configured webhook.
+    """
+    domain = payload.get("domain", "")
+    round_num = payload.get("round", 0)
+    state_summary = (payload.get("state_summary") or "").strip() or "(no state summary yet)"
+    last_round = payload.get("last_round") or {}
+    concept = (last_round.get("concept") or "").strip()
+    idea_expansion = (last_round.get("idea_expansion") or "").strip()
+    leader_next = (last_round.get("leader_next_concept") or "").strip()
+
+    content_lines = [
+        f"**Alpha Engine Recap** (domain: `{domain}`, round: {round_num})",
+        "",
+        "**State of the Theory:**",
+        state_summary,
+        "",
+        "**Last Round:**",
+        f"- Concept: {concept or '(n/a)'}",
+        f"- Next concept: {leader_next or '(n/a)'}",
+    ]
+    content = "\n".join(content_lines)
+
+    data = json.dumps({"content": content}).encode("utf-8")
+    req = urllib.request.Request(
+        webhook_url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            _ = resp.read()
+        log("ORCH", C_DIM, "Sent webhook recap", f"url={webhook_url}")
+    except Exception as e:
+        log("ORCH", C_ERR, "Webhook recap error", str(e))
+
+
+def main() -> None:
+    # Dynamic kickoff: CLI arg override, else domain seed
+    if len(sys.argv) > 1:
+        task = " ".join(sys.argv[1:]).strip()
+    else:
+        task = ACTIVE_DOMAIN_CONFIG["seed"].strip()
+
+    # Optional bounded-run control via env var; default is infinite loop when unset/invalid
+    max_rounds_env = os.environ.get("ALPHA_MAX_ROUNDS", "").strip()
+    try:
+        max_rounds = int(max_rounds_env) if max_rounds_env else None
+        if max_rounds is not None and max_rounds <= 0:
+            max_rounds = None
+    except ValueError:
+        max_rounds = None
+
+    # Use API key only if set in env (after .env load). None = no Authorization header for local LM Studio.
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LM_STUDIO_API_KEY") or None
+
+    # Single LM Studio endpoint and model for all roles (Builder, Compressor, RedTeam, Leader)
+    base_url = LMSTUDIO_BASE_URL
+    model_id_env = os.environ.get("ALPHA_MODEL_ID") or os.environ.get("LM_STUDIO_MODEL_ID")
+    builder_model_id = model_id_env or "local-model"
+    leader_model_id = builder_model_id
+    # OpenAI client requires api_key; use placeholder for local LM Studio with auth disabled.
+    client_key = api_key if api_key is not None else "lm-studio"
+    builder_client = OpenAI(api_key=client_key, base_url=base_url)
+    leader_client = OpenAI(api_key=client_key, base_url=base_url)
+
+    # Initialize idea log if new
+    if not IDEA_LOG_PATH.exists():
+        IDEA_LOG_PATH.write_text(
+            "# Idea log (theory-crafting loop)\n\n"
+            f"Started with initial concept: {task[:200]}{'...' if len(task) > 200 else ''}\n",
+            encoding="utf-8",
+        )
+    log(
+        "ORCH",
+        C_DIM,
+        "Starting loop",
+        f"domain={ACTIVE_DOMAIN} | idea_log={IDEA_LOG_PATH} | initial_concept={task[:50]}...",
+    )
+
+    webhook_url = (os.environ.get(WEBHOOK_URL_KEY) or "").strip()
+    if webhook_url:
+        log("ORCH", C_DIM, "Webhook recap enabled", f"url={webhook_url}")
+
+    round_num = 1
+    last_round_texts: list[str] = []
+    last_state_summary: str = ""
+    last_recap_ts = time.time()
+    while True:
+        try:
+            current_task = task
+            log("BUILDER", C_BUILDER, "Sending concept to Builder", current_task[:80] + ("..." if len(current_task) > 80 else ""))
+            idea_expansion, query_memory = call_role(
+                builder_client,
+                builder_model_id,
+                ROLE_BUILDER,
+                task=current_task,
+            )
+            log("BUILDER", C_BUILDER, "Response received", f"idea_len={len(idea_expansion)} query_memory_for={repr(query_memory[:50])}")
+
+            # Optional mid-stage compression for logging and future use (compact Builder text to avoid context overflow)
+            idea_for_mid = _compact_role_input(idea_expansion, "Compressor/RedTeam")
+            compressor_output, _ = call_role(
+                builder_client,
+                builder_model_id,
+                ROLE_COMPRESSOR,
+                task=current_task,
+                idea_expansion=idea_for_mid,
+            )
+
+            # Red Team attacks based on Builder expansion (and optionally Compressor later)
+            redteam_output, _ = call_role(
+                builder_client,
+                builder_model_id,
+                ROLE_REDTEAM,
+                task=current_task,
+                idea_expansion=idea_for_mid,
+            )
+
+            rag_context = get_rag_context(query_memory)
+            rag_context = _compact_leader_rag_context(rag_context)
+
+            log("LEADER", C_LEADER, "Sending to Leader (idea + RAG)", "")
+            next_task, state_tracker_json = call_role(
+                leader_client,
+                leader_model_id,
+                ROLE_LEADER,
+                task=current_task,
+                idea_expansion=idea_expansion,
+                rag_context=rag_context,
+            )
+            log("LEADER", C_LEADER, "Next concept", next_task[:80] + ("..." if len(next_task) > 80 else ""))
+            # Per-round organizer: compact sectioned deduplicated memory from current round outputs
+            organized_memory = compile_organized_memory(
+                leader_client,
+                leader_model_id,
+                current_task,
+                idea_expansion,
+                compressor_output,
+                redteam_output,
+                next_task,
+                state_tracker_json,
+            )
+            if not (organized_memory or "").strip():
+                organized_memory = fallback_organized_memory(
+                    current_task,
+                    idea_expansion,
+                    compressor_output,
+                    redteam_output,
+                    next_task,
+                    state_tracker_json,
+                )
+            # Persist this round (including organized memory)
+            append_to_idea_log(
+                round_num,
+                idea_expansion,
+                compressor_output,
+                redteam_output,
+                next_task,
+                state_tracker_json,
+                organized_memory=organized_memory,
+            )
+
+            # Append machine-readable Alpha Engine record for potential future RAG ingestion
+            append_alpha_concept_jsonl(
+                round_num=round_num,
+                current_task=current_task,
+                idea_expansion=idea_expansion,
+                query_memory_for=query_memory,
+                compressor_output=compressor_output,
+                redteam_output=redteam_output,
+                leader_next_task=next_task,
+                state_tracker_json=state_tracker_json,
+                organized_memory=organized_memory,
+            )
+
+            # Track last 5 rounds for executive state compiler
+            round_block = (
+                f"Round {round_num}\n"
+                f"Builder expansion:\n{idea_expansion.strip() or '(none)'}\n\n"
+                f"Compressor summary:\n{(compressor_output or '').strip()}\n\n"
+                f"Red Team attacks:\n{(redteam_output or '').strip()}\n\n"
+                f"Leader evaluation / next concept:\n{next_task.strip()}\n\n"
+                f"State Tracker JSON:\n{(state_tracker_json or '').strip()}"
+            )
+            last_round_texts.append(round_block)
+            if len(last_round_texts) > 5:
+                last_round_texts.pop(0)
+
+            # Every 5 rounds, compile and prepend a 'State of the Theory'
+            if round_num % 5 == 0 and len(last_round_texts) == 5:
+                log("ORCH", C_LEADER, "Compiling State of the Theory", f"rounds={round_num-4}-{round_num}")
+                summary = compile_state_summary(
+                    leader_client, leader_model_id, round_num, last_round_texts
+                )
+                if summary.strip():
+                    last_state_summary = summary
+                    prepend_state_summary(round_num, summary)
+
+            # Periodic webhook recap
+            if webhook_url and (time.time() - last_recap_ts) >= RECAP_INTERVAL_SEC:
+                payload = {
+                    "domain": ACTIVE_DOMAIN,
+                    "round": round_num,
+                    "timestamp": time.time(),
+                    "state_summary": last_state_summary,
+                    "last_round": {
+                        "concept": current_task,
+                        "idea_expansion": idea_expansion,
+                        "leader_next_concept": next_task,
+                    },
+                }
+                send_webhook_recap(webhook_url, payload)
+                last_recap_ts = time.time()
+
+            round_num += 1
+            task = next_task
+
+            if max_rounds is not None and round_num > max_rounds:
+                break
+        except KeyboardInterrupt:
+            log("ORCH", C_DIM, "Stopped by user", "")
+            break
+        except Exception as e:
+            log("ORCH", C_ERR, "Loop error", str(e))
+
+        time.sleep(LOOP_SLEEP_SEC)
+
+
+if __name__ == "__main__":
+    main()

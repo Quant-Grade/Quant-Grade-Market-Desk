@@ -1,0 +1,31 @@
+# RAG System v2 - Hardened Build
+# Python 3.10+ required
+#
+# Paths: if RAG_V2_BASE_DIR is unset, defaults to this package root (parent of src/). Override when needed.
+
+# Core ML/Embeddings
+sentence-transformers>=2.2.2  # Embeddings + cross-encoder
+torch>=2.0.0  # PyTorch (CPU version fine, GPU auto-detected)
+
+# Vector DB
+qdrant-client>=1.7.0  # Qdrant local embedded mode
+
+# Document parsing
+PyMuPDF>=1.23.0  # PDF extraction (fitz)
+
+# LLM client
+openai>=1.0.0  # LM Studio OpenAI-compatible client
+
+# Utilities
+numpy>=1.24.0
+scipy>=1.10.0  # For sparse matrices in BM25
+
+# Standard library (no install needed):
+# - sqlite3 (parent chunk storage)
+# - pickle (BM25 index persistence)
+# - json, logging, pathlib, dataclasses, enum
+
+# Optional for development:
+# pytest>=7.0.0
+# black>=23.0.0
+# mypy>=1.0.0

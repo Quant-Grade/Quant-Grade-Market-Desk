@@ -1,0 +1,68 @@
+# --- Secrets & local env (never commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+id_rsa*
+*.key
+credentials.json
+secrets/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+ENV/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
+.cursor/
+
+# --- RAG v2 generated / machine-local data (rebuild: ingest + index_*) ---
+rag_system_v2/data/**/*.pkl
+rag_system_v2/data/embedding_cache/
+rag_system_v2/data/embedding_cache_alpha/
+rag_system_v2/data/qdrant/
+rag_system_v2/data/qdrant_alpha/
+rag_system_v2/data/chunks.jsonl
+rag_system_v2/data/parents.sqlite
+rag_system_v2/data/archive/
+rag_system_v2/data/*.jsonl
+rag_system_v2/logs/
+
+# --- Orchestrator / operator logs (high churn; local paths) ---
+idea_log.md
+
+# --- Model / cache junk if created under repo ---
+hub/
+checkpoints/
+*.safetensors
+*.bin
+
+# --- Temp ---
+*.tmp
+*.log
+/tmp/
+
+# --- Large imported context-pack dumps (optional local copies; not required to run) ---
+artifacts/imported_snapshots/rag_system_v2_docs/master_manifest_*.md
+
+# --- Local audit / paste dumps ---
+rag_system_v2/docs/loop-check.txt
