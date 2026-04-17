@@ -1365,3 +1365,11 @@
   - Synthetic: `import orchestrator` with **`ALPHA_GOVERNANCE_OPTIONS=1`** — **`_leader_governance_valid`** **True** on aligned 2-option dict; **False** on baton mismatch.
   - **Bounded live round:** `ALPHA_MAX_ROUNDS=1`, **`ALPHA_GOVERNANCE_OPTIONS=1`**, **`ALPHA_NO_COLOR=1`**, `python -X utf8 orchestrator.py` → **exit 0**; last **`alpha_concepts.jsonl`** line: **`state_tracker.ledger_delta`** = **`governance_validation_failed`**, **`governance_parse_error`** **True**, **`leader_next_task`** = **`current_task`** (initial seed — baton held). **Cause:** Leader LM output did not satisfy A-lite schema after repair (exact raw JSON not captured in log).
 - **Stopped:** Arbiter, registry/CANONICAL_PATHS updates, prompt tuning — **not** in this round unless leader orders.
+
+### Round 75 — Git repository initialization and first push
+- **Objective:** Initialize **`git`** at repo root, add **`.gitignore`**, first commit excluding secrets/generated/large junk, **`gh repo create`** + **`push`** when available.
+- **Files added:** `.gitignore` (Python, env, caches, RAG generated data, embeddings, qdrant, logs, optional manifests).
+- **Files updated:** `fix_plan.md` (this entry).
+- **Remote:** **`https://github.com/MattRbear/RAG_SYSTEM`** (private), branch **`main`**, commit **`1a9f1ee`** (initial import message).
+- **Verification:** `git status` clean except ignored locals; `gh repo create ... --push` exit **0**; `main` tracks **`origin/main`**.
+- **Excluded (not committed):** `.env`, `idea_log.md`, `__pycache__/`, `.mypy_cache/`, `.cursor/`, `.pytest_cache/`, `rag_system_v2/data/*.pkl`, `embedding_cache/`, `embedding_cache_alpha/`, `qdrant/`, `qdrant_alpha/`, `chunks.jsonl`, `*.jsonl` under `data/`, `parents.sqlite`, `logs/`, `master_manifest_*.md` imports, `rag_system_v2/docs/loop-check.txt`.
