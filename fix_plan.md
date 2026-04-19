@@ -1373,3 +1373,90 @@
 - **Remote:** **`https://github.com/MattRbear/RAG_SYSTEM`** (private), branch **`main`**, commit **`1a9f1ee`** (initial import message).
 - **Verification:** `git status` clean except ignored locals; `gh repo create ... --push` exit **0**; `main` tracks **`origin/main`**.
 - **Excluded (not committed):** `.env`, `idea_log.md`, `__pycache__/`, `.mypy_cache/`, `.cursor/`, `.pytest_cache/`, `rag_system_v2/data/*.pkl`, `embedding_cache/`, `embedding_cache_alpha/`, `qdrant/`, `qdrant_alpha/`, `chunks.jsonl`, `*.jsonl` under `data/`, `parents.sqlite`, `logs/`, `master_manifest_*.md` imports, `rag_system_v2/docs/loop-check.txt`.
+
+### Round 76 — Lane 4 governance observability (`ALPHA_DEBUG_GOV`)
+- **Objective:** On A-lite governance validation failure, log **first failing clause** only (no pass/fail behavior change); feature flag **`ALPHA_DEBUG_GOV=1`**.
+- **Files changed:** `orchestrator.py` — **`_leader_governance_diagnose`**, **`_leader_governance_valid`** (= diagnose is None), **`_debug_governance_log_clause`**, calls before fail-closed returns (strict + non-strict); `fix_plan.md` (this entry).
+- **Verification:**
+  - `python -X utf8 -m py_compile orchestrator.py` → **exit 0**.
+  - **Bounded run:** `ALPHA_MAX_ROUNDS=1`, **`ALPHA_GOVERNANCE_OPTIONS=1`**, **`ALPHA_DEBUG_GOV=1`**, **`ALPHA_NO_COLOR=1`** → **exit 0**; log detail line **`baton_mismatch`**; last **`alpha_concepts.jsonl`** line still **`governance_validation_failed`** / **`governance_parse_error`** (fail-closed preserved).
+- **Stopped:** Baton sync / prompt-only fixes — **not** in this round (Lane 4 only).
+
+### Round 77 — Lane 1 deterministic baton sync (`baton_mismatch` only)
+- **Objective:** When A-lite governance fails **only** because **`baton_mismatch`**, deterministically set **`baton_pass.next_task`** from the selected option’s **`next_task`**, re-validate, persist **`baton_synced_from_governance: true`** in **`state_tracker`**, one log line **`baton_synced_from_governance` / `applied`**; no Builder/RAG/Compressor/RedTeam/schema shape changes; **`ALPHA_GOVERNANCE_OPTIONS` off** leaves behavior unchanged (sync no-op).
+- **Files changed:** `orchestrator.py` — **`_try_governance_baton_sync_if_only_mismatch`**, **`_state_from_parsed_leader`** (provenance flag), **`call_leader`** (non-strict + strict pre-validation sync); `fix_plan.md` (this entry).
+- **Verification:**
+  - `python -X utf8 -m py_compile orchestrator.py` → **exit 0** (this session).
+  - **Bounded run:** `ALPHA_MAX_ROUNDS=1`, **`ALPHA_GOVERNANCE_OPTIONS=1`**, **`ALPHA_DEBUG_GOV=1`**, **`ALPHA_NO_COLOR=1`**, `python -X utf8 orchestrator.py` → **exit 0**; stdout: **`baton_synced_from_governance`** / **`applied`**; last line **`rag_system_v2/data/alpha_concepts.jsonl`**: **`state_tracker.ledger_delta`** = **`Keep`** (not **`governance_validation_failed`**), **`state_tracker.baton_synced_from_governance`** **`true`**, **`governance_parse_error`** absent at top level (parse succeeded).
+- **Non-baton fail-closed:** `_try_governance_baton_sync_if_only_mismatch` returns **`False`** unless **`_leader_governance_diagnose(obj) == "baton_mismatch"`**; any other diagnose code skips sync — **not** re-proven with a separate failing LM round this session (code-path review only).
+- **Rollback:** `git checkout -- orchestrator.py`; `git checkout -- fix_plan.md` (or remove **`### Round 77`** block); optional: delete/revert appended **`alpha_concepts.jsonl`** line if undesired.
+
+### Round 78 — Governance foundation proof closure (A + B + resume)
+- **Objective:** Close evidence gaps: **(A)** non-**`baton_mismatch`** governance failure → **no** baton sync, fail-closed checkpoint shape, **`governance_validation_clause`** log; **(B)** **`ALPHA_GOVERNANCE_OPTIONS=1`** **N=3** bounded run + **checkpoint continuity**; **resume** **`ALPHA_RESUME=1`** one round from tail — **no** `orchestrator.py` behavior change.
+- **Files added:** `artifacts/verification/governance_foundation_proof_a.py` (deterministic Proof **A** only).
+- **Procedure (this session):** Backup → remove **`rag_system_v2/data/alpha_concepts.jsonl`** → **N=3** live run → parse tail → **`ALPHA_RESUME=1`**, **`ALPHA_MAX_ROUNDS=1`** → restore **`alpha_concepts.jsonl`** from backup; delete temp backup file under **`artifacts/verification/`** after restore.
+- **Verification:**
+  - **`python -X utf8 artifacts/verification/governance_foundation_proof_a.py`** (repo root) → stdout **`PROOF_A_OK`** (exit **0**); exercises **`score_range`**, **`option_count`**, **`baton_mismatch`** control; asserts **`build_alpha_checkpoint_record`** reflects **`governance_validation_failed`** for fail-closed JSON.
+  - **N=3:** `ALPHA_MAX_ROUNDS=3`, **`ALPHA_GOVERNANCE_OPTIONS=1`**, **`ALPHA_DEBUG_GOV=1`**, **`ALPHA_NO_COLOR=1`** → **exit 0**; **3** jsonl lines **`round_id` 1–3**; each **`state_tracker`**: **`governance_options`** length **3**, **`ledger_delta`** present (not **`governance_validation_failed`** on these LM rounds), **`baton_synced_from_governance`** **`true`** (Leader emitted **`baton_mismatch`** then sync).
+  - **Resume:** Log **`Resume checkpoint`** **`last_round_id=3`** **`next_round_num=4`** **`window=3`**; fourth line **`round_id` 4**; governance structure sane.
+- **Out of scope:** **`serve_cli`** Gate 2, RAG core refactors, new roles.
+- **Rollback:** Remove **`artifacts/verification/governance_foundation_proof_a.py`** if undesired; `git checkout -- fix_plan.md`.
+
+### Round 79 — Low-blast correctness (checkpoint UTC, cold-start warn, proof harness)
+- **Objective:** Four narrow fixes from operator audit: **(1)** timezone-aware checkpoint timestamps (no **`utcnow`** deprecation); **(2)** one **dim** log when **`alpha_concepts.jsonl`** has prior rounds but **`ALPHA_RESUME` is not 1** (duplicate **`round_id`** hazard); **(3)** Proof **A** captures baton-sync **log** in-buffer and asserts content; **(4)** Proof **A** fails fast if **`orchestrator.py`** missing at repo root.
+- **Files changed:** `orchestrator.py` — module **`datetime`/`timezone`**, **`build_alpha_checkpoint_record`** timestamp, **`maybe_rotate_alpha_jsonl`** uses module imports; **`main`** **`else`** branch after resume; `artifacts/verification/governance_foundation_proof_a.py`; `fix_plan.md` (this entry).
+- **Verification:**
+  - `python -X utf8 -m py_compile orchestrator.py` → **exit 0**.
+  - `python -X utf8 artifacts/verification/governance_foundation_proof_a.py` → **`PROOF_A_OK`** (exit **0**).
+  - **Gate 1** (from **`rag_system_v2`**): `python -X utf8 -c "from src.serve_cli import RAGOrchestrator; print('import_ok')"` → **`import_ok`** (exit **0**).
+  - **Smoke:** `python -X utf8 -m pytest tests/test_smoke.py -v` → **2 passed, 8 failed** (failures: chunk ID separator expectation, router tier naming, relative-import **`src`** package tests, **`RouterConfig`** / **`EmbeddingConfig`** attribute drift, **`rrf`** merge shape — **pre-existing vs current `src`**, not introduced this round).
+- **Rollback:** `git checkout -- orchestrator.py artifacts/verification/governance_foundation_proof_a.py fix_plan.md`.
+
+### Round 80 — Resume-after-governance-failure proof (execution prep only)
+- **Objective:** Lock **least-friction** execution lane: **machine-generated** synthetic fail-tail using **`build_alpha_checkpoint_record`** + **`_leader_governance_fail_state`**, then **`ALPHA_RESUME=1`** bounded run. **No** runtime proof executed in this ledger line (prep / operator recipe only).
+- **Files changed:** `fix_plan.md` (this entry) only.
+- **Next action:** Follow **Round 80** minimal plan in operator chat: backup **`alpha_concepts.jsonl`** → replace with **one-line** synthetic tail (or temp swap) → resume run → capture log + tail jsonl → restore backup.
+- **Rollback (proof run):** Restore **`rag_system_v2/data/alpha_concepts.jsonl`** from backup.
+
+### Round 81 — Resume-after-governance-failure proof (**executed**, isolated single-line swap)
+- **Objective:** Prove **`ALPHA_RESUME=1`** when **last checkpoint** is **governance fail-closed** (`ledger_delta` **`governance_validation_failed`**, **`governance_parse_error`** **true**, baton **`PROOF_RESUME_FAIL_HELD`**).
+- **Execution lane:** **Isolated single-line jsonl** — **`artifacts/verification/_resume_proof_synthetic_line.jsonl`** (machine-generated) copied to **`rag_system_v2/data/alpha_concepts.jsonl`** after **`alpha_concepts.jsonl`** backup to **`artifacts/verification/_resume_proof_bak_alpha_concepts.jsonl`**; **restore** after run.
+- **Commands (record):** Generate line via **`python -X utf8 -c`** (imports **`orchestrator`**, **`round_id=3`**, **`build_alpha_checkpoint_record`** + **`_leader_governance_fail_state`**); **`ALPHA_RESUME=1`**, **`ALPHA_MAX_ROUNDS=1`**, **`ALPHA_GOVERNANCE_OPTIONS=1`**, **`ALPHA_DEBUG_GOV=1`**, **`ALPHA_NO_COLOR=1`**, **`python -X utf8 orchestrator.py`**; log tee **`artifacts/verification/_resume_after_fail_proof_log.txt`**.
+- **What passed:**
+  - Log: **`Resume checkpoint`** **`last_round_id=3`** **`next_round_num=4`** **`window=1`**.
+  - **`alpha_concepts.jsonl`** (before restore): **line 1** **`round_id` 3**, **`ledger_delta`** **`governance_validation_failed`**, **`governance_parse_error`** **true**, **`leader_next_task`** **`PROOF_RESUME_FAIL_HELD`**; **line 2** **`round_id` 4**, **`leader_next_task`** **`PROOF_RESUME_FAIL_HELD`**, **`ledger_delta`** **`Cut`**, **`governance_parse_error`** absent (**Leader** green on resume round).
+  - Orchestrator **exit 0**; working **`alpha_concepts.jsonl`** **restored** from backup after verification.
+- **What did not prove:** LM **caused** fail-closed line (synthetic); **`rebuild_last_round_texts`** with **multi-line** window only had **window=1** here.
+- **Artifacts:** **`_resume_proof_synthetic_line.jsonl`**, **`_resume_after_fail_proof_log.txt`**, **`_resume_proof_bak_alpha_concepts.jsonl`** (backup of pre-proof file).
+- **Files changed:** `fix_plan.md` (this entry) only — **no** `orchestrator.py` edits.
+- **Rollback:** Restore from **`_resume_proof_bak_alpha_concepts.jsonl`** (done); delete synthetic/log artifacts if undesired.
+
+### Round 82 — Post-**Round 81** foundation decision (ledger only)
+- **Objective:** Record **highest-EV** next move for **alpha loop foundation** after **resume-after-fail** proof **green**: **freeze** further loop foundation proving unless a **named** gap blocks operations; **pivot** effort to **next subsystem** per **`Fix_plan.md` Current State** (e.g. **Gate 2** / **`serve_cli`**). **Optional** follow-up: **multi-line synthetic resume** (**window > 1**) — **low** cost, **closes** **Round 81** footnote only.
+- **Files changed:** `fix_plan.md` (this entry) only.
+- **Verification:** N/A (decision pass).
+
+### Round 83 — Lane 4 freeze: bounded sanity run (default governance OFF)
+- **Objective:** One **`ALPHA_MAX_ROUNDS=1`** run with **`ALPHA_GOVERNANCE_OPTIONS` unset** — confirm loop **starts**, **one** round **completes**, checkpoint **appends** without immediate failure.
+- **Command:** `Set-Location c:\GitHub\RAG_SYSTEM`; `$env:ALPHA_MAX_ROUNDS='1'`; `$env:ALPHA_NO_COLOR='1'`; clear **`ALPHA_GOVERNANCE_OPTIONS` / `ALPHA_RESUME` / `ALPHA_DEBUG_GOV`** if set; **`python -X utf8 orchestrator.py`**
+- **Result:** **exit 0**; **`[ORCH] Starting loop`**; Builder → RAG → Leader **`Next concept`**; **`alpha_concepts.jsonl`** gained **one** new line; last line **`state_tracker`** = **four** keys only (**`baton_pass`**, no **`governance_options`** — matches **gov OFF**). Dim log **`Checkpoint history present`** (existing jsonl on disk). Stderr: **HF Hub** unauthenticated warning; embedding load **BERT** report. **Note:** jsonl can show **duplicate `round_id`** values on **cold** start without **`ALPHA_RESUME=1`** — **pre-existing** behavior when history exists.
+- **Files changed:** `fix_plan.md` (this entry) only.
+
+### Round 84 — Spawn-point: loop foundation freeze commit + **`Recap.md`**
+- **Objective:** Scoped git commit: **`orchestrator.py`**, **`fix_plan.md`**, **`artifacts/verification/governance_foundation_proof_a.py`**, optional resume proof artifacts (not backup jsonl), **`Recap.md`**; **exclude** unrelated **`rag_system_v2/src/**` edits and **`_resume_proof_bak_alpha_concepts.jsonl`**.
+- **Files changed:** `Recap.md` (added); `fix_plan.md` (this entry).
+
+### Round 85 — Phase A: theory path (`theory_log.md` append-only + summary caps)
+- **Objective:** **`compile_state_summary`**: cap joined input **48_000** chars (tail keep + `...[truncated]` prefix), **`max_tokens=1024`**; **`prepend_state_summary`**: append YAML-frontmatter blocks to **`theory_log.md`** (repo root), **no** `os.replace` on **`idea_log.md`**; **no** Scribe, **no** Builder/RAG/Leader contract changes.
+- **Files changed:** `orchestrator.py`; `fix_plan.md` (this entry).
+- **Verification:** `Set-Location c:\GitHub\RAG_SYSTEM`; `$env:ALPHA_MAX_ROUNDS='5'`; `$env:ALPHA_NO_COLOR='1'`; gov unset — **`python -X utf8 orchestrator.py`** → **exit 0**; **~940s** wall; log **`Compiling State of the Theory`** **`rounds=1-5`**; **`theory_log.md`** appended (`theory_log_version: 1`, `round_range: 1-5`); **no** **`Loop error`** / **WinError 5** in log.
+
+### Round 86 — Milestone hygiene: ignore `theory_log.md` (policy A)
+- **Objective:** Spawn-point commit scope — **`theory_log.md`** remains **local/runtime** (same class as **`idea_log.md`**); add **one** ignore line; **do not** commit **`theory_log.md`**.
+- **Files changed:** `.gitignore` (`theory_log.md`); `fix_plan.md` (this entry).
+- **Verification:** `git check-ignore -v theory_log.md` → **`.gitignore:52:theory_log.md	theory_log.md`** (file present on disk; rule active).
+
+### Round 87 — Scribe v0 flight recorder (`scribe_ledger.jsonl`)
+- **Objective:** After successful **`commit_round_checkpoint`**, append one deterministic jsonl line to **`rag_system_v2/data/scribe_ledger.jsonl`**: **`checkpoint_sha256`** = SHA-256 of exact UTF-8 bytes of checkpoint line as written (newline included); **`ts_utc`** mirrored from checkpoint record; no LM, no authority; failure logs **`Ledger append failed`** and does not break loop.
+- **Files changed:** `orchestrator.py` (`scribe_ledger_jsonl_path`, `_append_scribe_ledger`, hook after checkpoint; **`alpha_concepts.jsonl` append uses `newline='\n'`** so Windows does not emit **CRLF** — on-disk bytes match **`jsonl_line.encode("utf-8")`** for Scribe hash); `fix_plan.md` (this entry).
+- **Verification:** `Set-Location c:\GitHub\RAG_SYSTEM`; `$env:ALPHA_MAX_ROUNDS='1'`; `$env:ALPHA_NO_COLOR='1'`; gov/resume unset — **`python -X utf8 orchestrator.py`** → **exit 0** (**~180s** wall second run); Python: last **`alpha_concepts.jsonl`** line **`hashlib.sha256(line_bytes).hexdigest()`** = last Scribe **`checkpoint_sha256`**; **`round_id`** / **`ts_utc`** = checkpoint record.

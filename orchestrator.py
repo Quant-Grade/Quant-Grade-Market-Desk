@@ -2,15 +2,19 @@
 Dual-PC AI Loop Orchestrator (Idea-Compounding / Theory-Crafting Engine)
 ========================================================================
 24/7 loop: Builder PC (idea expansion + memory query) → RAG → Leader PC (evaluation, next concept).
-Pure architectural planning and theory—no executable code. Logs to idea_log.md in project root.
+Pure architectural planning and theory—no executable code. Logs to idea_log.md (round narrative)
+and theory_log.md (append-only State of the Theory) in project root. Append-only Scribe v0 ledger:
+rag_system_v2/data/scribe_ledger.jsonl (checkpoint-attached flight recorder; no LM).
 """
 
+import hashlib
 import json
 import os
 import re
 import sys
 import time
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 # --- RAG base dir MUST be set before any RAG config/import ---
@@ -19,6 +23,10 @@ _script_dir = Path(__file__).resolve().parent
 _rag_v2_base = (_script_dir / "rag_system_v2").resolve()
 os.environ["RAG_V2_BASE_DIR"] = str(_rag_v2_base)
 IDEA_LOG_PATH = _script_dir / "idea_log.md"
+# Phase A: append-only theory summaries (no os.replace on idea_log.md)
+THEORY_LOG_PATH = _script_dir / "theory_log.md"
+STATE_SUMMARY_MAX_INPUT_CHARS = 48_000
+STATE_SUMMARY_MAX_TOKENS = 1024
 
 # Domain-driven alpha engine configuration
 DOMAINS = {
@@ -73,10 +81,21 @@ RECAP_INTERVAL_SEC = 30 * 60  # 30 minutes
 
 # A-lite governance: Leader emits 2–3 scored options + selected id. Default OFF.
 GOVERNANCE_OPTIONS_ENV = "ALPHA_GOVERNANCE_OPTIONS"
+# Lane 4: log first failing governance clause on validation failure only. Default OFF.
+DEBUG_GOV_ENV = "ALPHA_DEBUG_GOV"
 
 
 def _governance_options_enabled() -> bool:
     return os.environ.get(GOVERNANCE_OPTIONS_ENV, "").strip() == "1"
+
+
+def _debug_governance_log_clause(obj: dict) -> None:
+    """If ALPHA_DEBUG_GOV=1, log first failing A-lite clause (no pass/fail side effects)."""
+    if os.environ.get(DEBUG_GOV_ENV, "").strip() != "1":
+        return
+    code = _leader_governance_diagnose(obj)
+    if code is not None:
+        log("LEADER", C_DIM, "governance_validation_clause", code)
 
 
 # --- ANSI colors (Windows 10+ supports VT); disable when unsupported so raw escapes don't appear ---
@@ -116,6 +135,11 @@ ROLE_LEADER = "leader"
 def alpha_concepts_jsonl_path() -> Path:
     """Canonical path for round checkpoint jsonl (P1/P2)."""
     return _rag_v2_base / "data" / "alpha_concepts.jsonl"
+
+
+def scribe_ledger_jsonl_path() -> Path:
+    """Scribe v0: deterministic checkpoint-attached append-only ledger (machine-only)."""
+    return _rag_v2_base / "data" / "scribe_ledger.jsonl"
 
 
 def maybe_rotate_alpha_jsonl(alpha_path: Path) -> None:
@@ -162,8 +186,6 @@ def maybe_rotate_alpha_jsonl(alpha_path: Path) -> None:
 
     if not over:
         return
-
-    from datetime import datetime, timezone
 
     archive_dir = alpha_path.parent / "archive"
     archive_dir.mkdir(parents=True, exist_ok=True)
@@ -717,54 +739,101 @@ def _clean_next_task_text(s: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
-def _leader_governance_valid(obj: dict) -> bool:
-    """A-lite: 2–3 options with confidence and collateral_risk in [0,1]; selected id matches; baton matches selected next_task."""
+def _leader_governance_diagnose(obj: dict) -> str | None:
+    """
+    First failing A-lite clause, or None if valid.
+    Codes: baton_mismatch, option_count, id_type, selected_id_missing, score_range,
+    field_type, malformed_option, other_exact_reason
+    """
     opts = obj.get("governance_options")
     if not isinstance(opts, list) or len(opts) not in (2, 3):
-        return False
+        return "option_count"
     sid_raw = obj.get("selected_option_id")
-    if not isinstance(sid_raw, str) or not sid_raw.strip():
-        return False
+    if sid_raw is None:
+        return "selected_id_missing"
+    if not isinstance(sid_raw, str):
+        return "id_type"
+    if not sid_raw.strip():
+        return "selected_id_missing"
     sid = sid_raw.strip()
     seen: set[str] = set()
     for o in opts:
         if not isinstance(o, dict):
-            return False
+            return "malformed_option"
         oid_raw = o.get("id")
         if not isinstance(oid_raw, str) or not oid_raw.strip():
-            return False
+            return "id_type"
         oid = oid_raw.strip()
         if oid in seen:
-            return False
+            return "malformed_option"
         seen.add(oid)
         if not isinstance(o.get("summary"), str):
-            return False
+            return "field_type"
         nt_raw = o.get("next_task")
         if not isinstance(nt_raw, str) or not nt_raw.strip():
-            return False
+            return "field_type"
         for key in ("confidence", "collateral_risk"):
             v = o.get(key)
             if isinstance(v, bool):
-                return False
+                return "field_type"
             try:
                 fv = float(v)
             except (TypeError, ValueError):
-                return False
+                return "field_type"
             if fv < 0.0 or fv > 1.0:
-                return False
+                return "score_range"
     if sid not in seen:
-        return False
+        return "other_exact_reason"
     bp = obj.get("baton_pass")
     if not isinstance(bp, dict):
-        return False
+        return "field_type"
     bp_nt = _clean_next_task_text(str(bp.get("next_task") or ""))
     selected_nt = ""
     for o in opts:
         if isinstance(o, dict) and str(o.get("id", "")).strip() == sid:
             selected_nt = _clean_next_task_text(str(o.get("next_task") or ""))
             break
-    if not selected_nt or bp_nt != selected_nt:
+    if not selected_nt:
+        return "other_exact_reason"
+    if bp_nt != selected_nt:
+        return "baton_mismatch"
+    return None
+
+
+def _leader_governance_valid(obj: dict) -> bool:
+    """A-lite: 2–3 options with confidence and collateral_risk in [0,1]; selected id matches; baton matches selected next_task."""
+    return _leader_governance_diagnose(obj) is None
+
+
+def _try_governance_baton_sync_if_only_mismatch(obj: dict) -> bool:
+    """
+    Lane 1: if governance fails only with baton_mismatch, set baton_pass.next_task from the
+    selected option's next_task (same string as in JSON). No-op if gov off or any other clause fails.
+    """
+    if not _governance_options_enabled():
         return False
+    if _leader_governance_diagnose(obj) != "baton_mismatch":
+        return False
+    sid = str(obj.get("selected_option_id", "")).strip()
+    opts = obj.get("governance_options")
+    if not isinstance(opts, list):
+        return False
+    raw_nt: str | None = None
+    for o in opts:
+        if isinstance(o, dict) and str(o.get("id", "")).strip() == sid:
+            nt = o.get("next_task")
+            if isinstance(nt, str) and nt.strip():
+                raw_nt = nt
+            break
+    if raw_nt is None:
+        return False
+    bp = obj.get("baton_pass")
+    if not isinstance(bp, dict):
+        return False
+    bp["next_task"] = raw_nt
+    if _leader_governance_diagnose(obj) is not None:
+        return False
+    log("LEADER", C_DIM, "baton_synced_from_governance", "applied")
     return True
 
 
@@ -778,7 +847,9 @@ def _leader_fully_valid(obj: dict) -> bool:
     return True
 
 
-def _state_from_parsed_leader(obj: dict, current_task: str) -> tuple[str, dict]:
+def _state_from_parsed_leader(
+    obj: dict, current_task: str, *, baton_synced: bool = False
+) -> tuple[str, dict]:
     core = str(obj.get("core_objective_anchor", "") or "")
     ledger = str(obj.get("ledger_delta", "") or "")
     risk = str(obj.get("highest_active_risk", "") or "")
@@ -807,6 +878,8 @@ def _state_from_parsed_leader(obj: dict, current_task: str) -> tuple[str, dict]:
             )
         state["governance_options"] = opts_clean
         state["selected_option_id"] = str(obj.get("selected_option_id", "")).strip()
+        if baton_synced:
+            state["baton_synced_from_governance"] = True
     return next_task or current_task, state
 
 
@@ -918,9 +991,13 @@ Respond with the JSON object defined in your system instructions. Do not answer 
             if not isinstance(obj, dict) or not _leader_schema_valid(obj):
                 nt, st = _fallback_prose(raw)
                 return nt, json.dumps(st, ensure_ascii=False)
+            baton_synced = False
+            if gov and isinstance(obj, dict):
+                baton_synced = _try_governance_baton_sync_if_only_mismatch(obj)
             if gov and not _leader_governance_valid(obj):
+                _debug_governance_log_clause(obj)
                 return current_task, json.dumps(_leader_governance_fail_state(current_task), ensure_ascii=False)
-            nt, st = _state_from_parsed_leader(obj, current_task)
+            nt, st = _state_from_parsed_leader(obj, current_task, baton_synced=baton_synced)
             return nt, json.dumps(st, ensure_ascii=False)
 
         def _chat(msgs: list, temp: float = 0.0):
@@ -943,8 +1020,12 @@ Respond with the JSON object defined in your system instructions. Do not answer 
         except json.JSONDecodeError:
             obj1 = None
 
+        baton_synced1 = False
+        if isinstance(obj1, dict) and gov:
+            baton_synced1 = _try_governance_baton_sync_if_only_mismatch(obj1)
+
         if isinstance(obj1, dict) and _leader_fully_valid(obj1):
-            nt, st = _state_from_parsed_leader(obj1, current_task)
+            nt, st = _state_from_parsed_leader(obj1, current_task, baton_synced=baton_synced1)
             return nt, json.dumps(st, ensure_ascii=False)
 
         if gov:
@@ -975,8 +1056,12 @@ Respond with the JSON object defined in your system instructions. Do not answer 
         except json.JSONDecodeError:
             obj2 = None
 
+        baton_synced2 = False
+        if isinstance(obj2, dict) and gov:
+            baton_synced2 = _try_governance_baton_sync_if_only_mismatch(obj2)
+
         if isinstance(obj2, dict) and _leader_fully_valid(obj2):
-            nt, st = _state_from_parsed_leader(obj2, current_task)
+            nt, st = _state_from_parsed_leader(obj2, current_task, baton_synced=baton_synced2)
             return nt, json.dumps(st, ensure_ascii=False)
 
         if allow_prose:
@@ -989,6 +1074,7 @@ Respond with the JSON object defined in your system instructions. Do not answer 
             and gov
             and not _leader_governance_valid(obj2)
         ):
+            _debug_governance_log_clause(obj2)
             return current_task, json.dumps(_leader_governance_fail_state(current_task), ensure_ascii=False)
 
         fail_state = {
@@ -1154,8 +1240,6 @@ def build_alpha_checkpoint_record(
     rag_context_snapshot: str,
 ) -> dict:
     """Single dict for one jsonl line (P1 checkpoint)."""
-    from datetime import datetime
-
     state_parsed: dict | None = None
     if state_tracker_json:
         try:
@@ -1170,7 +1254,7 @@ def build_alpha_checkpoint_record(
     return {
         "round": round_id,
         "round_id": round_id,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "current_task": current_task,
         "builder_expansion": idea_expansion,
         "query_memory_for": query_memory_for,
@@ -1231,7 +1315,8 @@ def commit_round_checkpoint(
     i_before = _atomic_file_byte_length(idea_path)
 
     try:
-        with alpha_path.open("a", encoding="utf-8") as jf:
+        # newline='' prevents \n -> \r\n on Windows so on-disk bytes match jsonl_line.encode("utf-8") (Scribe hash).
+        with alpha_path.open("a", encoding="utf-8", newline="\n") as jf:
             jf.write(jsonl_line)
             jf.flush()
             try:
@@ -1249,6 +1334,41 @@ def commit_round_checkpoint(
         _truncate_file_to_bytes(alpha_path, j_before)
         _truncate_file_to_bytes(idea_path, i_before)
         raise
+
+    _append_scribe_ledger(record, jsonl_line, alpha_path)
+
+
+def _append_scribe_ledger(checkpoint_record: dict, jsonl_line: str, alpha_path: Path) -> None:
+    """
+    Scribe v0: append one jsonl line after successful checkpoint. SHA-256 over exact UTF-8 bytes
+    of the checkpoint line as written (json.dumps + newline). Failure is logged; never raises.
+    """
+    try:
+        line_bytes = jsonl_line.encode("utf-8")
+        checkpoint_sha256 = hashlib.sha256(line_bytes).hexdigest()
+        task_sha256 = hashlib.sha256((checkpoint_record.get("current_task") or "").encode("utf-8")).hexdigest()
+        rel = str(alpha_path.resolve().relative_to(_script_dir.resolve()).as_posix())
+        ledger = {
+            "v": 1,
+            "ts_utc": checkpoint_record["timestamp"],
+            "round_id": checkpoint_record["round_id"],
+            "task_sha256": task_sha256,
+            "disp": "checkpoint_committed",
+            "checkpoint_sha256": checkpoint_sha256,
+            "checkpoint_path_rel": rel,
+        }
+        out = json.dumps(ledger, ensure_ascii=False) + "\n"
+        scribe_path = scribe_ledger_jsonl_path()
+        scribe_path.parent.mkdir(parents=True, exist_ok=True)
+        with scribe_path.open("a", encoding="utf-8", newline="\n") as sf:
+            sf.write(out)
+            sf.flush()
+            try:
+                os.fsync(sf.fileno())
+            except (OSError, AttributeError):
+                pass
+    except Exception as e:
+        log("SCRIBE", C_ERR, "Ledger append failed", str(e)[:200])
 
 
 def append_to_idea_log(
@@ -1325,6 +1445,10 @@ def compile_state_summary(
     )
 
     joined_rounds = "\n\n".join(last_round_texts)
+    if len(joined_rounds) > STATE_SUMMARY_MAX_INPUT_CHARS:
+        _prefix = "...[truncated]\n\n"
+        _budget = STATE_SUMMARY_MAX_INPUT_CHARS - len(_prefix)
+        joined_rounds = _prefix + joined_rounds[-_budget:]
     user = f"Last 5 rounds up to round {round_num}:\n\n{joined_rounds}"
 
     try:
@@ -1335,6 +1459,7 @@ def compile_state_summary(
                 {"role": "user", "content": user},
             ],
             temperature=0.1,
+            max_tokens=STATE_SUMMARY_MAX_TOKENS,
         )
         summary = (r.choices[0].message.content or "").strip()
         return summary
@@ -1345,22 +1470,31 @@ def compile_state_summary(
 
 def prepend_state_summary(round_num: int, summary: str) -> None:
     """
-    Prepend the 3-bullet 'State of the Theory' summary to idea_log.md.
-    P5: write to a sibling .tmp file, then os.replace (atomic on same volume).
+    Append the 3-bullet 'State of the Theory' summary to theory_log.md (append-only).
+    idea_log.md round narrative is unchanged; no os.replace (avoids Windows lock issues on long runs).
     """
     if not summary.strip():
         return
 
-    idea_path = IDEA_LOG_PATH
-    existing = ""
-    if idea_path.exists():
-        existing = idea_path.read_text(encoding="utf-8")
-
-    header = f"### STATE OF THE THEORY (Round {round_num})\n\n"
-    new_content = header + summary.strip() + "\n\n" + existing
-    tmp_path = idea_path.parent / (idea_path.name + ".tmp")
-    tmp_path.write_text(new_content, encoding="utf-8")
-    os.replace(tmp_path, idea_path)
+    lo = max(1, round_num - 4)
+    hi = round_num
+    iso_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    block = (
+        "---\n"
+        "theory_log_version: 1\n"
+        f"iso_utc: {iso_utc}\n"
+        f"round_range: {lo}-{hi}\n"
+        "---\n\n"
+        f"{summary.strip()}\n\n"
+    )
+    THEORY_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with THEORY_LOG_PATH.open("a", encoding="utf-8") as tf:
+        tf.write(block)
+        tf.flush()
+        try:
+            os.fsync(tf.fileno())
+        except (OSError, AttributeError):
+            pass
 
 
 def compile_organized_memory(
@@ -1551,6 +1685,18 @@ def main() -> None:
             "Resume checkpoint",
             f"last_round_id={rid} next_round_num={round_num} window={len(last_round_texts)}",
         )
+    else:
+        if alpha_path.exists():
+            tip = load_last_alpha_jsonl_record(alpha_path)
+            if tip is not None:
+                rid_tip = int(tip.get("round_id", tip.get("round", 0)))
+                if rid_tip >= 1:
+                    log(
+                        "ORCH",
+                        C_DIM,
+                        "Checkpoint history present",
+                        f"last_round_id={rid_tip} on disk; cold start uses round_num=1 unless ALPHA_RESUME=1",
+                    )
 
     # Use API key only if set in env (after .env load). None = no Authorization header for local LM Studio.
     api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LM_STUDIO_API_KEY") or None
