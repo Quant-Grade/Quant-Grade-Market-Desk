@@ -1,0 +1,15 @@
+{
+  "asset": "BTC",
+  "timeframe": "1m",
+  "session": "NY",
+  "session_phase": "open_window",
+  "minutes_from_open": 5,
+  "price": 64100.50,
+  "vwap": 63800.00,
+  "prior_session_high": 64050.00,
+  "prior_session_low": 63200.00,
+  "current_behavior": "Price is aggressively moving upwards into the open window.",
+  "volatility_state": "Elevated volatility observed as participants position.",
+  "liquidity_context": "Thin asks above the prior session high; liquidity being consumed.",
+  "risk_mode": "Standard execution mode."
+}

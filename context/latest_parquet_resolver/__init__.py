@@ -1,0 +1,1 @@
+"""Latest Parquet Resolver Module"""

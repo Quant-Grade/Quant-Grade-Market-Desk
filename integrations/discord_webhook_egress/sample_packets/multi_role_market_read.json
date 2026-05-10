@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "packet_id": "sample_multirole_001",
+  "created_at": "2026-05-10T14:00:00Z",
+  "source_system": "local_llm_loop",
+  "source_role": "multi_role",
+  "asset": "BTC",
+  "timeframe": "15m",
+  "session": "NY",
+  "event_type": "multi_role_market_read",
+  "severity": "important",
+  "headline": "Microstructure and CVD Aligning for Potential Move",
+  "summary": "Both microstructure shifts and CVD divergences suggest underlying accumulation.",
+  "evidence_packets": [
+    "CVD shows positive divergence on the latest dip.",
+    "Microstructure shift observed at recent swing low."
+  ],
+  "rag_refs": ["CVD_Divergence_Patterns"],
+  "memory_refs": ["Recent_Dip_Analysis_003"],
+  "confirmation_needed": "Price needs to reclaim the 15m mid-range level to confirm the thesis.",
+  "invalidation": "Loss of the local swing low invalidates the accumulation read.",
+  "risk_mode": "Prepared. Set alerts for mid-range reclaim.",
+  "retail_translation": "Multiple indicators are showing signs of buying pressure, but we need more proof before acting.",
+  "leader_decision": "Consensus reached among roles. Ready for watch list.",
+  "scribe_note": "Multi-role read aggregated successfully.",
+  "not_financial_advice": true
+}

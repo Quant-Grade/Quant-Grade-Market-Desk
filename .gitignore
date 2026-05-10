@@ -49,6 +49,7 @@ rag_system_v2/logs/
 
 # --- Orchestrator / operator logs (high churn; local paths) ---
 idea_log.md
+theory_log.md
 
 # --- Model / cache junk if created under repo ---
 hub/
@@ -66,3 +67,14 @@ artifacts/imported_snapshots/rag_system_v2_docs/master_manifest_*.md
 
 # --- Local audit / paste dumps ---
 rag_system_v2/docs/loop-check.txt
+
+# --- Quant-Grade Market Desk pipeline data ---
+logs/
+outputs/
+inputs/generated/
+*.parquet
+*.duckdb
+*.sqlite
+*.db
+ACCEPTANCE_LOCAL_LLM_MARKET_REPORT_WRITER_LIVE_v0.1.md
+

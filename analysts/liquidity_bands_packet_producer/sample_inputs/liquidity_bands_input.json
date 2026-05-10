@@ -1,0 +1,17 @@
+{
+  "asset": "BTC",
+  "timeframe": "5m",
+  "session": "NY",
+  "price": 64205.00,
+  "nearest_upper_liquidity": 64200.00,
+  "nearest_lower_liquidity": 63500.00,
+  "liquidity_type": "prior_session_high",
+  "distance_to_zone": -5.00,
+  "distance_to_zone_pct": -0.007,
+  "zone": "64200",
+  "current_behavior": "Price pierced the prior session high and was immediately met with aggressive selling volume.",
+  "structure_context": "Divergence building on CVD footprint.",
+  "sweep_status": "sweeping_now",
+  "reaction_status": "clean_rejection",
+  "risk_mode": "Standard execution mode."
+}

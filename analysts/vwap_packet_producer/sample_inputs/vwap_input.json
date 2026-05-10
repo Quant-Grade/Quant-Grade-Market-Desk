@@ -1,0 +1,14 @@
+{
+  "asset": "BTC",
+  "timeframe": "1m",
+  "session": "NY",
+  "price": 63450.50,
+  "vwap": 63445.00,
+  "distance_to_vwap": 5.50,
+  "distance_to_vwap_pct": 0.008,
+  "prior_displacement": "Strong downside displacement earlier in the session, testing liquidity pools.",
+  "current_behavior": "Price is currently interacting directly with VWAP. Slight chop developing.",
+  "structure_context": "Approaching structural support from the 15m view.",
+  "microstructure_confirmation": "None. Volume delta is neutral.",
+  "risk_mode": "Standard execution mode."
+}

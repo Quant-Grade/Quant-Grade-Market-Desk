@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "packet_id": "sample_vwap_watch_001",
+  "created_at": "2026-05-10T07:00:00Z",
+  "source_system": "local_llm_loop",
+  "source_role": "vwap",
+  "asset": "BTC",
+  "timeframe": "1m",
+  "session": "NY",
+  "event_type": "vwap_watch",
+  "severity": "watch",
+  "headline": "BTC testing VWAP reaction zone",
+  "summary": "Price is interacting with VWAP after prior displacement. This is a watch condition, not an entry call.",
+  "evidence_packets": [
+    "Price is near VWAP after moving away from prior structure.",
+    "Reaction quality still needs confirmation.",
+    "No-trade if chop develops around VWAP."
+  ],
+  "rag_refs": [],
+  "memory_refs": [],
+  "confirmation_needed": "Clean reaction away from VWAP with structure confirmation from microstructure module.",
+  "invalidation": "Slow chop around VWAP or clean acceptance through the zone without rejection.",
+  "risk_mode": "Watch only. No chase.",
+  "retail_translation": "VWAP is not a magic buy/sell line. The signal is how price behaves around it.",
+  "leader_decision": "Approved for Discord dry-run test.",
+  "scribe_note": "First egress adapter sample packet.",
+  "not_financial_advice": true
+}
