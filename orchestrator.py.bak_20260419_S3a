@@ -176,26 +176,6 @@ ROLE_REDTEAM = "redteam"
 ROLE_LEADER = "leader"
 
 
-# Envelope version registered in SCHEMAS.md §2.3.
-# Line-record envelope token "v" MUST be the first key of every new
-# alpha_concepts.jsonl record. Readers tolerate missing "v" as legacy (pre-S3a)
-# and fail-closed on unknown "v" with reason code "unknown_schema_version".
-ALPHA_CHECKPOINT_V = 1
-
-# Envelope version registered in SCHEMAS.md §2.5.
-# Markdown-block envelope: each new round section in idea_log.md is prefixed
-# with an HTML comment. Legacy round sections (pre-S3b) carry no header.
-IDEA_LOG_ROUND_SECTION_V = 1
-
-# Envelope version registered in SCHEMAS.md §2.2.
-# Scribe v2 adds a required `source_role` field naming which role authored the
-# checkpoint this event records. Today the only committer is `leader` (the
-# baton-advancing authority). Future deferred LM roles will emit their own
-# event types with their own `source_role`. Field name is `source_role` (not
-# `role`) to stay semantically distinct from the baton-authority-role concept.
-SCRIBE_EVENT_V = 2
-
-
 def alpha_concepts_jsonl_path() -> Path:
     """Canonical path for round checkpoint jsonl (P1/P2)."""
     return _rag_v2_base / "data" / "alpha_concepts.jsonl"
@@ -295,30 +275,8 @@ def _require_operational_limits_or_exit() -> None:
         sys.exit(2)
 
 
-def _alpha_record_version_supported(rec: dict) -> bool:
-    """Reader-tolerance gate for alpha_concepts.jsonl records (SCHEMAS.md §3).
-
-    Missing 'v' → legacy pre-S3a record, accepted.
-    'v' == ALPHA_CHECKPOINT_V (currently 1) → accepted.
-    'v' present but unsupported (different int, wrong type, etc.) → fail-closed
-    with a logged 'unknown_schema_version' reason code.
-    """
-    if "v" not in rec:
-        return True
-    v = rec.get("v")
-    if isinstance(v, int) and v == ALPHA_CHECKPOINT_V:
-        return True
-    log(
-        "ORCH",
-        C_ERR,
-        "unknown_schema_version",
-        f"artifact=alpha_concepts.jsonl got_v={v!r} supported_v={ALPHA_CHECKPOINT_V}",
-    )
-    return False
-
-
 def load_last_alpha_jsonl_record(path: Path) -> dict | None:
-    """Return parsed dict from last non-empty line, or None if missing/empty/unsupported."""
+    """Return parsed dict from last non-empty line, or None if missing/empty."""
     if not path.exists():
         return None
     lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -326,13 +284,9 @@ def load_last_alpha_jsonl_record(path: Path) -> dict | None:
         return None
     try:
         rec = json.loads(lines[-1])
+        return rec if isinstance(rec, dict) else None
     except json.JSONDecodeError:
         return None
-    if not isinstance(rec, dict):
-        return None
-    if not _alpha_record_version_supported(rec):
-        return None
-    return rec
 
 
 def _round_block_from_checkpoint_record(rec: dict) -> str:
@@ -369,7 +323,7 @@ def rebuild_last_round_texts_from_jsonl(path: Path, window: int) -> list[str]:
     for ln in tail:
         try:
             rec = json.loads(ln)
-            if isinstance(rec, dict) and _alpha_record_version_supported(rec):
+            if isinstance(rec, dict):
                 out.append(_round_block_from_checkpoint_record(rec))
         except json.JSONDecodeError:
             continue
@@ -394,7 +348,7 @@ def ensure_builder_ip() -> str:
     if not env_path.exists():
         env_path.write_text(
             f"{BUILDER_IP_KEY}=\n"
-            f"{WEBHOOK_URL_KEY}=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN\n",
+            f"{WEBHOOK_URL_KEY}=https://discord.com/api/webhooks/1435560268196352020/NJoXVTTS6j-mnrY3-tNN2RUdlTasQ56lYbwmx7kIcRIZ-EUyEL__cp_5YVOSxF0thvFz\n",
             encoding="utf-8",
         )
         print(f"{C_DIM}Created {ENV_FILENAME} in {_script_dir}{C_RESET}")
@@ -1291,15 +1245,8 @@ def format_idea_log_round_section(
     state_tracker_json: str,
     organized_memory: str = "",
 ) -> str:
-    """Markdown fragment for one round (used by atomic commit and legacy append).
-
-    Each new round section carries an HTML-comment version envelope per SCHEMAS.md §2.5.
-    Legacy round sections in existing idea_log.md files have no header and remain readable.
-    """
-    parts: list[str] = [
-        f"\n<!-- round_section_version: {IDEA_LOG_ROUND_SECTION_V} -->\n",
-        f"## Round {round_num}\n\n",
-    ]
+    """Markdown fragment for one round (used by atomic commit and legacy append)."""
+    parts: list[str] = [f"\n## Round {round_num}\n\n"]
     parts.append("### Builder expansion\n\n")
     parts.append(idea_expansion if idea_expansion.strip() else "(none)\n")
     parts.append("\n\n### Compressor summary\n\n")
@@ -1357,10 +1304,7 @@ def build_alpha_checkpoint_record(
 
     state_value = state_parsed if state_parsed is not None else {"raw": state_tracker_json or ""}
 
-    # "v" MUST be the first key (SCHEMAS.md §2.3 line-record envelope).
-    # Python 3.7+ preserves dict insertion order, which json.dumps honors.
     return {
-        "v": ALPHA_CHECKPOINT_V,
         "round": round_id,
         "round_id": round_id,
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -1457,13 +1401,8 @@ def _append_scribe_ledger(checkpoint_record: dict, jsonl_line: str, alpha_path: 
         checkpoint_sha256 = hashlib.sha256(line_bytes).hexdigest()
         task_sha256 = hashlib.sha256((checkpoint_record.get("current_task") or "").encode("utf-8")).hexdigest()
         rel = str(alpha_path.resolve().relative_to(_script_dir.resolve()).as_posix())
-        # Scribe v2 envelope (SCHEMAS.md §2.2): `v` first, `source_role` second.
-        # `disp="checkpoint_committed"` is always authored by the baton-advancing
-        # role (today: leader). Legacy v1 entries on disk have no `source_role`
-        # and remain readable by future chain-verify tooling per §3.
         ledger = {
-            "v": SCRIBE_EVENT_V,
-            "source_role": "leader",
+            "v": 1,
             "ts_utc": checkpoint_record["timestamp"],
             "round_id": checkpoint_record["round_id"],
             "task_sha256": task_sha256,

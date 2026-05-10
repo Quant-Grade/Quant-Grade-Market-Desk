@@ -32,13 +32,9 @@ import hashlib
 from pathlib import Path
 from typing import List
 
-# Parent-of-src on sys.path so `src/` resolves as a package and package-relative
-# imports (`from .config`) inside the production modules work. The earlier
-# `sys.path.insert(0, str(_RAG_V2_ROOT / "src"))` broke every module that used
-# relative imports (verify.py, router.py, build_all.py, etc.). See
-# REGRESSION_NET.md §4.1 Test 5/7/9 "INVOCATION DRIFT" for the classification.
+# Add src to path for imports
 _RAG_V2_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_RAG_V2_ROOT))
+sys.path.insert(0, str(_RAG_V2_ROOT / "src"))
 # Portable default: tests always resolve data/ under this rag_system_v2 tree unless overridden.
 os.environ.setdefault("RAG_V2_BASE_DIR", str(_RAG_V2_ROOT))
 
@@ -52,7 +48,7 @@ def test_chunk_id_determinism():
     Chunk IDs MUST be stable across rebuilds.
     Same (doc_id, parent_idx, child_idx) = same chunk_id.
     """
-    from src.ingest import compute_stable_chunk_id
+    from ingest import compute_stable_chunk_id
     
     # Test case 1: basic ID
     doc_id = "abc123def456"
@@ -68,13 +64,9 @@ def test_chunk_id_determinism():
     id3 = compute_stable_chunk_id(doc_id, parent_idx, child_idx + 1)
     assert id1 != id3, "Different inputs should produce different IDs"
     
-    # Test case 3: ID format is valid.
-    # Current contract: 12-char lowercase hex (content-addressed hash prefix).
-    # Structured citation format lives in RetrievedChunk.citation_id() which
-    # composes {doc_prefix}:{page}:{chunk_hash[:4]} — not tested here.
-    assert len(id1) == 12, f"Chunk ID should be 12 chars, got {len(id1)}: {id1!r}"
-    assert all(c in '0123456789abcdef' for c in id1), \
-        f"Chunk ID should be lowercase hex, got {id1!r}"
+    # Test case 3: ID format is valid
+    assert len(id1) > 10, "Chunk ID should be reasonably long"
+    assert ':' in id1 or '_' in id1, "Chunk ID should have separators"
     
     print("✓ test_chunk_id_determinism passed")
 
@@ -116,7 +108,7 @@ def test_bm25_tokenization_stability():
     BM25 tokenizer MUST produce consistent results.
     Critical for retrieval reproducibility.
     """
-    from src.index_bm25 import BM25Tokenizer
+    from index_bm25 import BM25Tokenizer
     
     tokenizer = BM25Tokenizer()
     
@@ -151,7 +143,7 @@ def test_router_decision_mapping():
     Router MUST handle all decision types.
     No missing cases allowed.
     """
-    from src.config import RouterDecision, ModelTier
+    from config import RouterDecision, ModelTier
     
     # All decisions exist
     expected_decisions = [
@@ -166,12 +158,10 @@ def test_router_decision_mapping():
     for expected in expected_decisions:
         assert expected in actual_decisions, f"Missing decision: {expected}"
     
-    # Model tiers exist. ModelTier values are lowercase by design to match
-    # LM Studio model aliases (LLMConfig.fast_model = "fast" default).
-    # RouterDecision values stay uppercase (protocol-level); intentional skew.
-    expected_tiers = ['fast', 'smart']
+    # Model tiers exist
+    expected_tiers = ['FAST', 'SMART']
     actual_tiers = [t.value for t in ModelTier]
-
+    
     for expected in expected_tiers:
         assert expected in actual_tiers, f"Missing tier: {expected}"
     
@@ -187,7 +177,7 @@ def test_verify_fail_closed():
     Citation verifier MUST fail-closed.
     No citations = FAIL, not PASS.
     """
-    from src.verify import CitationVerifier, VerificationStatus, FixAction
+    from verify import CitationVerifier, VerificationStatus, FixAction
     
     verifier = CitationVerifier()
     
@@ -236,24 +226,22 @@ def test_config_validation():
     Config MUST validate threshold ordering.
     REFUSE < CLARIFY < RETRIEVE < DIRECT
     """
-    from src.config import get_config
+    from config import get_config
     
     config = get_config()
     
-    # Threshold ordering — all RouterConfig thresholds use `t_` prefix (disciplined
-    # distinction between thresholds and scores).
-    t_refuse = config.router.t_refuse_threshold
-    t_clarify = config.router.t_clarify_confidence
-    t_retrieve = config.router.t_retrieve_confidence
-    t_direct = config.router.t_direct_confidence
-
+    # Threshold ordering
+    t_refuse = config.router.refuse_threshold
+    t_clarify = config.router.clarify_confidence
+    t_retrieve = config.router.retrieve_confidence
+    t_direct = config.router.direct_confidence
+    
     assert t_refuse <= t_clarify <= t_retrieve <= t_direct, \
         f"Threshold ordering violated: refuse={t_refuse}, clarify={t_clarify}, retrieve={t_retrieve}, direct={t_direct}"
-
-    # Embedding dimension is reasonable (attribute is `dimensions`, plural; computed
-    # property on EmbeddingConfig).
-    assert 128 <= config.embedding.dimensions <= 4096, \
-        f"Embedding dimensions out of range: {config.embedding.dimensions}"
+    
+    # Embedding dimension is reasonable
+    assert 128 <= config.embedding.dimension <= 4096, \
+        f"Embedding dimension out of range: {config.embedding.dimension}"
     
     # Paths exist or can be created
     assert config.paths.data_dir is not None, "Data dir must be set"
@@ -269,15 +257,14 @@ def test_manifest_schema_version():
     """
     Schema version MUST be defined and consistent.
     """
-    from src.build_all import SCHEMA_VERSION, Manifest
+    from build_all import SCHEMA_VERSION, Manifest
     
-    # Schema version exists and is valid.
-    # Current SCHEMA_VERSION is tracked in SCHEMAS.md §2.1; v3 as of S2 (data_dir-
-    # relative POSIX paths). Prior versions: v2 (absolute paths), v1 (pre-doc).
-    # Assert the invariant (int, >= 1) rather than pinning a specific value —
-    # pinning a value is the stale-assertion footgun that broke this test at v3.
+    # Schema version exists and is valid
     assert isinstance(SCHEMA_VERSION, int), "Schema version must be int"
-    assert SCHEMA_VERSION >= 1, f"Schema version must be >= 1, got {SCHEMA_VERSION}"
+    assert SCHEMA_VERSION >= 1, "Schema version must be >= 1"
+    
+    # Current version is 2 (as specified in build)
+    assert SCHEMA_VERSION == 2, f"Expected schema v2, got v{SCHEMA_VERSION}"
     
     print("✓ test_manifest_schema_version passed")
 
@@ -290,20 +277,19 @@ def test_embedding_config_consistency():
     """
     Embedding model config MUST match expected dimensions.
     """
-    from src.config import get_config
+    from config import get_config
     
     config = get_config()
     
-    # EmbeddingConfig uses `model` (model id string) and `dimensions` (int property).
-    # bge-small-en-v1.5 should be 384 dims.
-    if "bge-small" in config.embedding.model.lower():
-        assert config.embedding.dimensions == 384, \
-            f"bge-small should be 384 dims, config says {config.embedding.dimensions}"
-
-    # all-MiniLM-L6-v2 should be 384 dims.
-    if "minilm-l6" in config.embedding.model.lower():
-        assert config.embedding.dimensions == 384, \
-            f"MiniLM-L6 should be 384 dims, config says {config.embedding.dimensions}"
+    # BGE-small-en-v1.5 should be 384 dims
+    if "bge-small" in config.embedding.model_name.lower():
+        assert config.embedding.dimension == 384, \
+            f"bge-small should be 384 dims, config says {config.embedding.dimension}"
+    
+    # all-MiniLM-L6-v2 should be 384 dims
+    if "minilm-l6" in config.embedding.model_name.lower():
+        assert config.embedding.dimension == 384, \
+            f"MiniLM-L6 should be 384 dims, config says {config.embedding.dimension}"
     
     print("✓ test_embedding_config_consistency passed")
 
@@ -316,7 +302,7 @@ def test_injection_detection_exists():
     """
     Router MUST have injection detection capability.
     """
-    from src.router import InjectionDetector
+    from router import InjectionDetector
     
     detector = InjectionDetector()
     
@@ -353,7 +339,7 @@ def test_rrf_merge_correctness():
     """
     RRF merge MUST produce correct rank fusion.
     """
-    from src.merge_rrf import RRFMerger
+    from merge_rrf import RRFMerger
     
     merger = RRFMerger(k=60)
     
@@ -371,13 +357,11 @@ def test_rrf_merge_correctness():
         ("A", 10.0)
     ]
     
-    # Current RRFMerger.merge signature returns (merged_list, merge_stats) and
-    # requires a top_k kwarg. Destructure to get the list; stats is ignored here.
-    merged, _stats = merger.merge(vector_results, bm25_results, top_k=10)
-
+    merged = merger.merge(vector_results, bm25_results)
+    
     # B should rank highest (rank 2 + rank 1 = best combined)
     assert merged[0].chunk_id == "B", f"B should be top, got {merged[0].chunk_id}"
-
+    
     # All items present
     ids = {m.chunk_id for m in merged}
     assert ids == {"A", "B", "C"}, f"All items should be in result, got {ids}"

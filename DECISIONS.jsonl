@@ -1,0 +1,13 @@
+{"timestamp": "2026-05-10T09:57:44.999765+00:00", "text": "Webhook egress adapter can send validated signal packets to Discord."}
+{"timestamp": "2026-05-10T11:11:47.054855+00:00", "text": "VWAP producer is frozen as the first deterministic analyst packet source."}
+{"timestamp": "2026-05-10T11:46:02.847515+00:00", "text": "Session open producer is frozen as the second deterministic analyst packet source."}
+{"timestamp": "2026-05-10T12:10:46.872745+00:00", "text": "Liquidity bands producer is frozen as the third deterministic analyst packet source."}
+{"timestamp": "2026-05-10T12:25:32.737468+00:00", "text": "Multi-role combiner is frozen as the first deterministic market desk read layer."}
+{"timestamp": "2026-05-10T13:31:19.787496+00:00", "text": "Local LLM Market Report Writer is frozen after live LLM generation and Discord send proof."}
+{"timestamp": "2026-05-10T13:39:04.740352+00:00", "text": "Local LLM Market Report Writer is frozen after live LLM generation and Discord send proof."}
+{"timestamp": "2026-05-10T13:39:39.317521+00:00", "text": "Core Discord Intelligence Pipeline v0.1 is frozen after live LLM generation and Discord send proof."}
+{"timestamp": "2026-05-10T16:23:02.177800+00:00", "text": "Pipeline runner can now start from a real local OKX parquet file via --snapshot-input."}
+{"timestamp": "2026-05-10T16:53:16.603420+00:00", "text": "Latest valid OKX parquet can now be resolved automatically and used as snapshot input for the market report pipeline."}
+{"timestamp": "2026-05-10T17:00:14.976932+00:00", "text": "Pipeline can now auto-resolve latest valid OKX parquet and run the full market report pipeline from one command."}
+{"timestamp": "2026-05-10T19:17:08.651514+00:00", "text": "Operators should use profile commands instead of directly composing lower-level pipeline flags."}
+{"timestamp": "2026-05-10T19:33:35.630053+00:00", "text": "Continuous sweeps must start as bounded foreground supervisor runs before any background scheduler or daemon."}

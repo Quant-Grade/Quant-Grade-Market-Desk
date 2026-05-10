@@ -36,9 +36,9 @@ After commit, next Builder may receive **`PRIOR_STATE_TRACKER`** / **`PRIOR_ORGA
 
 **`commit_round_checkpoint`** — jsonl + `idea_log` advance together; no round advance on partial failure.
 
-### Append-only theory log (P5, Round-85 contract)
+### Prepend (P5)
 
-**`prepend_state_summary`** appends a YAML-frontmatter block (`theory_log_version: 1`) to **`theory_log.md`** at repo root. **No** rewrite of `idea_log.md`, **no** `idea_log.md.tmp` scratch file, **no** `os.replace`.
+**`idea_log.md.tmp`** → **`os.replace`** → `idea_log.md`.
 
 ### Retention (P8)
 
@@ -88,7 +88,7 @@ Round 29: Deterministic fallback organizer. When compile_organized_memory fails 
 - **P3:** After each committed round, the next Builder call receives `PRIOR_STATE_TRACKER` and optional `PRIOR_ORGANIZED_MEMORY` from the prior round.
 
 **Orchestrator Wave 2 (P5+P8)**
-- **P5 (Round-85 contract):** `prepend_state_summary` appends a YAML-frontmatter block (`theory_log_version: 1`, `iso_utc`, `round_range`, summary) to **`theory_log.md`** at repo root; **append-only**. `idea_log.md` is not modified; no `idea_log.md.tmp` scratch file; no `os.replace`. (Earlier in-place-rewrite approach was retired due to Windows file-lock issues on long runs.)
+- **P5:** `prepend_state_summary` rewrites `idea_log.md` via **`idea_log.md.tmp`** then **`os.replace`** (same directory as the log).
 - **P8:** Optional positive **`ALPHA_JSONL_MAX_BYTES`** and/or **`ALPHA_JSONL_MAX_LINES`**. If the active `alpha_concepts.jsonl` exceeds either threshold, it is moved to **`rag_system_v2/data/archive/alpha_concepts_<UTC>.jsonl`** (`os.replace`); the next commit starts a fresh jsonl. Checked before each jsonl append (`commit_round_checkpoint` and legacy jsonl append).
 
 **Orchestrator Wave 3 (P4+P7)**

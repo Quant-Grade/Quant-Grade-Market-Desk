@@ -281,13 +281,20 @@ class RouterConfig:
     
     # Prompt injection detection patterns (in retrieved text)
     injection_patterns: List[str] = field(default_factory=lambda: [
+        # Baseline jailbreak / delimiter stack (compiled case-insensitive in router)
         r"ignore (previous|above|all) instructions",
+        r"ignore\s+(?:all\s+)?(?:previous|above)\s+instructions",
         r"disregard (previous|above|all)",
+        r"disregard\s+safety\s+guidelines",
         r"you are now",
         r"new instructions:",
         r"system prompt:",
         r"</?(system|user|assistant)>",
         r"IMPORTANT:.*override",
+        # Role / fence / banner tokens common in adversarial wraps
+        r"(?m)^\s*system\s*:",
+        r"```\s*\n?\s*you\s+must\s+now\s+follow",
+        r"\[\[\s*override\s*\]\]",
     ])
 
 

@@ -42,7 +42,6 @@ from collections import Counter
 
 from .config import get_config
 from .build_all import Manifest, compute_file_hash
-from .index_bm25 import BM25Index
 
 logger = logging.getLogger(__name__)
 
@@ -217,8 +216,8 @@ class HealthChecker:
                         else:
                             chunk_ids.append(chunk['chunk_id'])
                         
-                        if 'text_original' not in chunk:
-                            issues.append(f"Line {i+1}: missing text_original")
+                        if 'text' not in chunk:
+                            issues.append(f"Line {i+1}: missing text")
                         
                         # Check schema version
                         if 'schema_version' in chunk and chunk['schema_version'] != 2:
@@ -346,7 +345,9 @@ class HealthChecker:
             )
         
         try:
-            bm25 = BM25Index.load(bm25_path)
+            with open(bm25_path, 'rb') as f:
+                bm25 = pickle.load(f)
+            
             stats = bm25.get_stats()
             doc_count = stats["total_docs"]
             vocab_size = stats["total_terms"]

@@ -34,9 +34,9 @@ After each **successful** round commit, the next Builder call can include **`PRI
 
 Each round uses **`commit_round_checkpoint`**: jsonl append and `idea_log` append are committed together — **`round_num` / `task` advance only after** commit succeeds.
 
-### State of the Theory append (P5)
+### State of the Theory prepend (P5)
 
-`prepend_state_summary` **appends** a YAML-frontmatter block (`theory_log_version: 1`, `iso_utc: <ISO8601 Z>`, `round_range: <lo>-<hi>`, summary text) to **`theory_log.md`** at repo root. **Append-only**: `idea_log.md` is not modified, no `idea_log.md.tmp` scratch file is written, no `os.replace` is used. Round-85 migration; superseded the earlier in-place-rewrite approach after Windows file-lock issues on long runs with open readers.
+`prepend_state_summary` writes **`idea_log.md.tmp`** then **`os.replace`** into `idea_log.md` (same directory).
 
 ### Retention (P8)
 

@@ -49,10 +49,7 @@ logger = logging.getLogger(__name__)
 # MANIFEST MANAGEMENT
 # ==============================================================================
 
-# v2 stored absolute machine-specific paths (e.g. C:\GitHub\...).
-# v3 stores paths as POSIX strings relative to the manifest's own data_dir so
-# the manifest is portable across machines. Content-hash fields are unchanged.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 2
 
 def compute_file_hash(path: Path) -> str:
     """Compute SHA-256 hash of file."""
@@ -120,10 +117,10 @@ class Manifest:
                 "parents_sha256": compute_file_hash(parents_path)
             },
             "paths": {
-                "chunks": chunks_path.relative_to(self.data_dir).as_posix(),
-                "bm25": bm25_path.relative_to(self.data_dir).as_posix(),
-                "qdrant": qdrant_path.relative_to(self.data_dir).as_posix(),
-                "parents": parents_path.relative_to(self.data_dir).as_posix()
+                "chunks": str(chunks_path),
+                "bm25": str(bm25_path),
+                "qdrant": str(qdrant_path),
+                "parents": str(parents_path)
             }
         }
         
@@ -164,29 +161,26 @@ class Manifest:
         paths = manifest.get("paths", {})
         hashes = manifest.get("hashes", {})
         
-        # Paths are stored relative to self.data_dir (schema v3) so the manifest
-        # is portable. Absolute strings from legacy v2 manifests still work because
-        # the Path / operator drops the left operand when the right is absolute.
         if paths.get("chunks"):
-            current = compute_file_hash(self.data_dir / paths["chunks"])
+            current = compute_file_hash(Path(paths["chunks"]))
             expected = hashes.get("chunks_sha256", "")
             if current != expected:
                 issues.append(f"chunks.jsonl hash mismatch")
-
+        
         if paths.get("bm25"):
-            current = compute_file_hash(self.data_dir / paths["bm25"])
+            current = compute_file_hash(Path(paths["bm25"]))
             expected = hashes.get("bm25_index_sha256", "")
             if current != expected:
                 issues.append(f"bm25_index.pkl hash mismatch")
-
+        
         if paths.get("qdrant"):
-            current = compute_directory_hash(self.data_dir / paths["qdrant"])
+            current = compute_directory_hash(Path(paths["qdrant"]))
             expected = hashes.get("qdrant_collection_hash", "")
             if current != expected:
                 issues.append(f"qdrant collection hash mismatch")
-
+        
         if paths.get("parents"):
-            current = compute_file_hash(self.data_dir / paths["parents"])
+            current = compute_file_hash(Path(paths["parents"]))
             expected = hashes.get("parents_sha256", "")
             if current != expected:
                 issues.append(f"{PARENTS_STORE_FILENAME} hash mismatch")

@@ -98,50 +98,6 @@ def _debug_governance_log_clause(obj: dict) -> None:
         log("LEADER", C_DIM, "governance_validation_clause", code)
 
 
-# --- Retrieval degradation counters (in-memory; shutdown print only) ---
-# Named-reason observability for fragility #4 (silent retrieval degradation).
-# No persisted schema change. Counters reset per process; never written to disk.
-_RAG_COUNTERS: dict[str, int] = {
-    "rag_retrieval_ok": 0,               # RETRIEVE_AND_ANSWER + >=1 chunk returned
-    "rag_no_memory_found": 0,            # empty query, router non-retrieve, or retriever 0 chunks
-    "rag_retrieval_error": 0,            # exception in router/retrieve path
-    "alpha_self_memory_attempted": 0,    # ALPHA_USE_SELF_MEMORY=1 and append helper invoked
-    "alpha_self_memory_empty": 0,        # attempted but alpha_block empty/skipped/errored
-}
-
-
-def _rag_counter_incr(name: str) -> None:
-    """Increment one retrieval degradation counter. Unknown names are silently ignored."""
-    if name in _RAG_COUNTERS:
-        _RAG_COUNTERS[name] += 1
-
-
-def _rag_counters_print_at_exit() -> None:
-    """Print retrieval degradation counters on process shutdown.
-    Silent when no retrieval occurred (avoids stdout contamination in wave harnesses).
-    """
-    try:
-        total_retrievals = (
-            _RAG_COUNTERS["rag_retrieval_ok"]
-            + _RAG_COUNTERS["rag_no_memory_found"]
-            + _RAG_COUNTERS["rag_retrieval_error"]
-        )
-        if total_retrievals == 0 and _RAG_COUNTERS["alpha_self_memory_attempted"] == 0:
-            return
-        log(
-            "RAG",
-            C_DIM,
-            "retrieval_counters_at_exit",
-            " ".join(f"{k}={v}" for k, v in _RAG_COUNTERS.items()),
-        )
-    except Exception:
-        pass  # Observability must never break shutdown
-
-
-import atexit as _atexit  # local import to keep module header minimal
-_atexit.register(_rag_counters_print_at_exit)
-
-
 # --- ANSI colors (Windows 10+ supports VT); disable when unsupported so raw escapes don't appear ---
 _use_ansi = (
     os.environ.get("ALPHA_NO_COLOR", "").strip() != "1"
@@ -174,26 +130,6 @@ ROLE_BUILDER = "builder"
 ROLE_COMPRESSOR = "compressor"
 ROLE_REDTEAM = "redteam"
 ROLE_LEADER = "leader"
-
-
-# Envelope version registered in SCHEMAS.md §2.3.
-# Line-record envelope token "v" MUST be the first key of every new
-# alpha_concepts.jsonl record. Readers tolerate missing "v" as legacy (pre-S3a)
-# and fail-closed on unknown "v" with reason code "unknown_schema_version".
-ALPHA_CHECKPOINT_V = 1
-
-# Envelope version registered in SCHEMAS.md §2.5.
-# Markdown-block envelope: each new round section in idea_log.md is prefixed
-# with an HTML comment. Legacy round sections (pre-S3b) carry no header.
-IDEA_LOG_ROUND_SECTION_V = 1
-
-# Envelope version registered in SCHEMAS.md §2.2.
-# Scribe v2 adds a required `source_role` field naming which role authored the
-# checkpoint this event records. Today the only committer is `leader` (the
-# baton-advancing authority). Future deferred LM roles will emit their own
-# event types with their own `source_role`. Field name is `source_role` (not
-# `role`) to stay semantically distinct from the baton-authority-role concept.
-SCRIBE_EVENT_V = 2
 
 
 def alpha_concepts_jsonl_path() -> Path:
@@ -295,30 +231,8 @@ def _require_operational_limits_or_exit() -> None:
         sys.exit(2)
 
 
-def _alpha_record_version_supported(rec: dict) -> bool:
-    """Reader-tolerance gate for alpha_concepts.jsonl records (SCHEMAS.md §3).
-
-    Missing 'v' → legacy pre-S3a record, accepted.
-    'v' == ALPHA_CHECKPOINT_V (currently 1) → accepted.
-    'v' present but unsupported (different int, wrong type, etc.) → fail-closed
-    with a logged 'unknown_schema_version' reason code.
-    """
-    if "v" not in rec:
-        return True
-    v = rec.get("v")
-    if isinstance(v, int) and v == ALPHA_CHECKPOINT_V:
-        return True
-    log(
-        "ORCH",
-        C_ERR,
-        "unknown_schema_version",
-        f"artifact=alpha_concepts.jsonl got_v={v!r} supported_v={ALPHA_CHECKPOINT_V}",
-    )
-    return False
-
-
 def load_last_alpha_jsonl_record(path: Path) -> dict | None:
-    """Return parsed dict from last non-empty line, or None if missing/empty/unsupported."""
+    """Return parsed dict from last non-empty line, or None if missing/empty."""
     if not path.exists():
         return None
     lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -326,13 +240,9 @@ def load_last_alpha_jsonl_record(path: Path) -> dict | None:
         return None
     try:
         rec = json.loads(lines[-1])
+        return rec if isinstance(rec, dict) else None
     except json.JSONDecodeError:
         return None
-    if not isinstance(rec, dict):
-        return None
-    if not _alpha_record_version_supported(rec):
-        return None
-    return rec
 
 
 def _round_block_from_checkpoint_record(rec: dict) -> str:
@@ -369,7 +279,7 @@ def rebuild_last_round_texts_from_jsonl(path: Path, window: int) -> list[str]:
     for ln in tail:
         try:
             rec = json.loads(ln)
-            if isinstance(rec, dict) and _alpha_record_version_supported(rec):
+            if isinstance(rec, dict):
                 out.append(_round_block_from_checkpoint_record(rec))
         except json.JSONDecodeError:
             continue
@@ -394,7 +304,7 @@ def ensure_builder_ip() -> str:
     if not env_path.exists():
         env_path.write_text(
             f"{BUILDER_IP_KEY}=\n"
-            f"{WEBHOOK_URL_KEY}=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN\n",
+            f"{WEBHOOK_URL_KEY}=https://discord.com/api/webhooks/1435560268196352020/NJoXVTTS6j-mnrY3-tNN2RUdlTasQ56lYbwmx7kIcRIZ-EUyEL__cp_5YVOSxF0thvFz\n",
             encoding="utf-8",
         )
         print(f"{C_DIM}Created {ENV_FILENAME} in {_script_dir}{C_RESET}")
@@ -710,18 +620,14 @@ def _maybe_append_alpha_context(context: str, query_memory_for: str) -> str:
     """When ALPHA_USE_SELF_MEMORY=1, append Alpha self-memory block from isolated indices."""
     if os.environ.get("ALPHA_USE_SELF_MEMORY", "").strip() != "1":
         return context
-    _rag_counter_incr("alpha_self_memory_attempted")
     try:
         from src.query_alpha_memory import get_alpha_self_memory_context
         alpha_block = get_alpha_self_memory_context(query_memory_for, top_k=3)
         if alpha_block:
             context = context + "\n\n[Alpha self-memory]\n" + alpha_block
             log("RAG", C_RAG, "Appended Alpha self-memory", f"query={query_memory_for[:50]}...")
-        else:
-            _rag_counter_incr("alpha_self_memory_empty")
     except Exception as e:
         log("RAG", C_DIM, "Alpha self-memory skipped", str(e))
-        _rag_counter_incr("alpha_self_memory_empty")
     return context
 
 
@@ -729,7 +635,6 @@ def get_rag_context(query_memory_for: str) -> str:
     """Route query; if RETRIEVE_AND_ANSWER, retrieve and return top-3 chunk context; else 'No local memory found.'"""
     if not query_memory_for.strip():
         log("RAG", C_RAG, "Empty query → no retrieval", "")
-        _rag_counter_incr("rag_no_memory_found")
         return "No local memory found."
 
     try:
@@ -742,7 +647,6 @@ def get_rag_context(query_memory_for: str) -> str:
 
         if out.decision != RouterDecision.RETRIEVE_AND_ANSWER:
             context = "No local memory found."
-            _rag_counter_incr("rag_no_memory_found")
         else:
             retriever = Retriever()
             result = retriever.retrieve(query_memory_for, top_k=5, include_parents=True)
@@ -750,19 +654,16 @@ def get_rag_context(query_memory_for: str) -> str:
             if not chunks:
                 log("RAG", C_RAG, "Retrieve returned 0 chunks", "")
                 context = "No local memory found."
-                _rag_counter_incr("rag_no_memory_found")
             else:
                 parts = []
                 for i, c in enumerate(chunks, 1):
                     parts.append(f"[{i}] {c.text.strip()}")
                 context = "\n\n".join(parts)
                 log("RAG", C_RAG, f"Using top {len(chunks)} chunks", f"query={query_memory_for[:60]}...")
-                _rag_counter_incr("rag_retrieval_ok")
 
         return _maybe_append_alpha_context(context, query_memory_for)
     except Exception as e:
         log("RAG", C_ERR, "RAG error", str(e))
-        _rag_counter_incr("rag_retrieval_error")
         return _maybe_append_alpha_context("No local memory found.", query_memory_for)
 
 
@@ -1291,15 +1192,8 @@ def format_idea_log_round_section(
     state_tracker_json: str,
     organized_memory: str = "",
 ) -> str:
-    """Markdown fragment for one round (used by atomic commit and legacy append).
-
-    Each new round section carries an HTML-comment version envelope per SCHEMAS.md §2.5.
-    Legacy round sections in existing idea_log.md files have no header and remain readable.
-    """
-    parts: list[str] = [
-        f"\n<!-- round_section_version: {IDEA_LOG_ROUND_SECTION_V} -->\n",
-        f"## Round {round_num}\n\n",
-    ]
+    """Markdown fragment for one round (used by atomic commit and legacy append)."""
+    parts: list[str] = [f"\n## Round {round_num}\n\n"]
     parts.append("### Builder expansion\n\n")
     parts.append(idea_expansion if idea_expansion.strip() else "(none)\n")
     parts.append("\n\n### Compressor summary\n\n")
@@ -1357,10 +1251,7 @@ def build_alpha_checkpoint_record(
 
     state_value = state_parsed if state_parsed is not None else {"raw": state_tracker_json or ""}
 
-    # "v" MUST be the first key (SCHEMAS.md §2.3 line-record envelope).
-    # Python 3.7+ preserves dict insertion order, which json.dumps honors.
     return {
-        "v": ALPHA_CHECKPOINT_V,
         "round": round_id,
         "round_id": round_id,
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -1457,13 +1348,8 @@ def _append_scribe_ledger(checkpoint_record: dict, jsonl_line: str, alpha_path: 
         checkpoint_sha256 = hashlib.sha256(line_bytes).hexdigest()
         task_sha256 = hashlib.sha256((checkpoint_record.get("current_task") or "").encode("utf-8")).hexdigest()
         rel = str(alpha_path.resolve().relative_to(_script_dir.resolve()).as_posix())
-        # Scribe v2 envelope (SCHEMAS.md §2.2): `v` first, `source_role` second.
-        # `disp="checkpoint_committed"` is always authored by the baton-advancing
-        # role (today: leader). Legacy v1 entries on disk have no `source_role`
-        # and remain readable by future chain-verify tooling per §3.
         ledger = {
-            "v": SCRIBE_EVENT_V,
-            "source_role": "leader",
+            "v": 1,
             "ts_utc": checkpoint_record["timestamp"],
             "round_id": checkpoint_record["round_id"],
             "task_sha256": task_sha256,
