@@ -1460,3 +1460,16 @@
 - **Objective:** After successful **`commit_round_checkpoint`**, append one deterministic jsonl line to **`rag_system_v2/data/scribe_ledger.jsonl`**: **`checkpoint_sha256`** = SHA-256 of exact UTF-8 bytes of checkpoint line as written (newline included); **`ts_utc`** mirrored from checkpoint record; no LM, no authority; failure logs **`Ledger append failed`** and does not break loop.
 - **Files changed:** `orchestrator.py` (`scribe_ledger_jsonl_path`, `_append_scribe_ledger`, hook after checkpoint; **`alpha_concepts.jsonl` append uses `newline='\n'`** so Windows does not emit **CRLF** — on-disk bytes match **`jsonl_line.encode("utf-8")`** for Scribe hash); `fix_plan.md` (this entry).
 - **Verification:** `Set-Location c:\GitHub\RAG_SYSTEM`; `$env:ALPHA_MAX_ROUNDS='1'`; `$env:ALPHA_NO_COLOR='1'`; gov/resume unset — **`python -X utf8 orchestrator.py`** → **exit 0** (**~180s** wall second run); Python: last **`alpha_concepts.jsonl`** line **`hashlib.sha256(line_bytes).hexdigest()`** = last Scribe **`checkpoint_sha256`**; **`round_id`** / **`ts_utc`** = checkpoint record.
+
+### Round 89 — CUB LOOP verification (verify_all gate) — 2026-08-08
+- **Objective:** Run the repo's own combined regression gate (`tools/verify_all.py`) as the CUB LOOP DoD proof for this fork, and record evidence-based status.
+- **Command:** `python -X utf8 tools\verify_all.py` (from repo root).
+- **Result:** `verify_all_failed  gated_failures=1  advisory_failures=0`
+  - **PASS (8/9):** P1 atomic commit; Wave 1 (P6+P2+P3); Wave 2 (P5+P8); Wave 3 (P4+P7); Proof A (governance); check_boundaries; check_api_contract; smoke suite (10/10).
+  - **FAIL (1):** `doctor` (rc=1) — `python -X utf8 -m src.doctor` reports UNHEALTHY.
+- **Doctor failure root cause (VERIFIED_FROM_FILE):** runtime data files absent — `chunks.jsonl`, `bm25_index.pkl`, `parents.sqlite` missing from `rag_system_v2/data/`; manifest.json (schema v3, chunk_count=2296, doc_count=8, sha256 hashes recorded) present but files gone; qdrant dir empty; LM Studio down. Source docs for rebuild also absent (`docs/` has only Meta-Prompts.txt + README).
+- **Why this is expected (VERIFIED_FROM_FILE):** `.gitignore` lines 39-44 exclude `rag_system_v2/data/**/*.pkl`, `chunks.jsonl`, `qdrant/`, etc. — runtime data is gitignored BY DESIGN. This checkout is a code mirror; the live index lives on the run machine (`c:\GitHub\RAG_SYSTEM`, per fix_plan Rounds 75-87). `git log --all -- data/chunks.jsonl` = no commits ever. Doctor correctly reports cold-runtime state; NOT a code defect.
+- **Same state confirmed in sibling:** QG-Recursive-LLM-RAG-System `rag_system_v2/data/` = manifest.json + qdrant only (identical cold mirror).
+- **DoD verdict:** 8/9 code gates GREEN + 1 correctly-diagnosed data-absence (cold mirror). No rebuild attempted — sources absent, live data is on another host, and this fork is operator-dedupe-pending.
+- **Files changed:** `fix_plan.md` (this entry) only.
+- **Rollback:** remove this entry.
